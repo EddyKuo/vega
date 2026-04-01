@@ -1,4 +1,5 @@
-// src/main.cpp — Phase 1: RAW decode + D3D11 display
+// src/main.cpp — Phase 2: Non-destructive editing pipeline
+#define NOMINMAX
 #include <windows.h>
 #include <commdlg.h>
 #include <d3d11.h>
@@ -13,14 +14,23 @@
 #include "gpu/D3D11Context.h"
 #include "raw/RawDecoder.h"
 #include "raw/ExifReader.h"
-#include "pipeline/SimplePipeline.h"
+#include "pipeline/Pipeline.h"
+#include "pipeline/EditRecipe.h"
+#include "pipeline/EditHistory.h"
 #include "ui/ImageViewport.h"
+#include "ui/DevelopPanel.h"
+#include "ui/HistogramView.h"
 
 using Microsoft::WRL::ComPtr;
 
 // ── Globals ──
 static vega::D3D11Context g_ctx;
 static vega::ImageViewport g_viewport;
+static vega::DevelopPanel g_develop_panel;
+static vega::HistogramView g_histogram;
+static vega::Pipeline g_pipeline;
+static vega::EditRecipe g_recipe;
+static vega::EditHistory g_history;
 
 // Current image state
 static vega::RawImage g_raw_image;
@@ -28,6 +38,8 @@ static bool g_has_image = false;
 static ComPtr<ID3D11ShaderResourceView> g_image_srv;
 static ComPtr<ID3D11Texture2D> g_image_tex;
 static std::string g_status_text = "Ready — Ctrl+O to open a RAW file";
+static std::filesystem::path g_current_path;
+static std::vector<uint8_t> g_rgba_buffer;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
     HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -41,9 +53,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
     case WM_SIZE:
         if (g_ctx.device() && wParam != SIZE_MINIMIZED)
-        {
             g_ctx.resize(LOWORD(lParam), HIWORD(lParam));
-        }
         return 0;
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -73,9 +83,22 @@ static void uploadImageToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint3
     g_image_srv.Reset();
     HRESULT hr = g_ctx.device()->CreateTexture2D(&desc, &init, &g_image_tex);
     if (SUCCEEDED(hr))
-    {
         g_ctx.device()->CreateShaderResourceView(g_image_tex.Get(), nullptr, &g_image_srv);
-    }
+}
+
+// Re-process the pipeline with current recipe and update display
+static void reprocessPipeline()
+{
+    if (!g_has_image) return;
+
+    vega::Timer timer;
+    g_rgba_buffer = g_pipeline.process(g_raw_image, g_recipe);
+    double ms = timer.elapsed_ms();
+
+    uploadImageToGPU(g_rgba_buffer, g_raw_image.width, g_raw_image.height);
+    g_histogram.compute(g_rgba_buffer.data(), g_raw_image.width, g_raw_image.height);
+
+    VEGA_LOG_DEBUG("Pipeline: {:.1f}ms", ms);
 }
 
 // Open file dialog and load RAW
@@ -94,14 +117,13 @@ static void openRawFile()
     if (!GetOpenFileNameW(&ofn))
         return;
 
-    std::filesystem::path filepath(filename);
-    VEGA_LOG_INFO("Opening: {}", filepath.string());
-    g_status_text = "Decoding " + filepath.filename().string() + "...";
+    g_current_path = std::filesystem::path(filename);
+    VEGA_LOG_INFO("Opening: {}", g_current_path.string());
 
     vega::Timer timer;
 
     // Decode RAW
-    auto result = vega::RawDecoder::decode(filepath);
+    auto result = vega::RawDecoder::decode(g_current_path);
     if (!result)
     {
         VEGA_LOG_ERROR("Failed to decode RAW file");
@@ -111,30 +133,35 @@ static void openRawFile()
 
     g_raw_image = std::move(result.value());
     double decode_ms = timer.elapsed_ms();
-    VEGA_LOG_INFO("RAW decoded: {}x{} in {:.1f}ms",
-                  g_raw_image.width, g_raw_image.height, decode_ms);
 
-    // Enrich metadata with EXIF
-    vega::ExifReader::enrichMetadata(filepath, g_raw_image.metadata);
+    // Enrich metadata
+    vega::ExifReader::enrichMetadata(g_current_path, g_raw_image.metadata);
 
-    // Run CPU pipeline (demosaic → sRGB)
-    timer.reset();
-    auto rgba = vega::SimplePipeline::process(g_raw_image);
-    double pipeline_ms = timer.elapsed_ms();
-    VEGA_LOG_INFO("Pipeline: {:.1f}ms", pipeline_ms);
+    // Load existing recipe or start fresh
+    auto saved = vega::loadRecipe(g_current_path);
+    if (saved)
+    {
+        g_recipe = *saved;
+        VEGA_LOG_INFO("Loaded .vgr sidecar");
+    }
+    else
+    {
+        g_recipe = vega::EditRecipe{};
+        g_recipe.wb_temperature = 5500.0f; // Will use camera WB by default
+    }
 
-    // Upload to GPU texture
-    uploadImageToGPU(rgba, g_raw_image.width, g_raw_image.height);
+    g_history.clear();
     g_has_image = true;
 
-    g_status_text = filepath.filename().string() +
+    // Process pipeline
+    reprocessPipeline();
+
+    g_status_text = g_current_path.filename().string() +
         " | " + g_raw_image.metadata.camera_make +
         " " + g_raw_image.metadata.camera_model +
-        " | ISO " + std::to_string(g_raw_image.metadata.iso_speed) +
         " | " + std::to_string(g_raw_image.width) + "x" +
         std::to_string(g_raw_image.height) +
-        " | Decode: " + std::to_string(static_cast<int>(decode_ms)) + "ms" +
-        " | Pipeline: " + std::to_string(static_cast<int>(pipeline_ms)) + "ms";
+        " | Decode: " + std::to_string(static_cast<int>(decode_ms)) + "ms";
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
@@ -142,7 +169,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     vega::Logger::init();
     VEGA_LOG_INFO("Vega v0.1.0 starting...");
 
-    // ── Window class ──
+    // ── Window ──
     WNDCLASSEXW wc = {};
     wc.cbSize        = sizeof(WNDCLASSEXW);
     wc.style         = CS_CLASSDC;
@@ -164,7 +191,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
-    // ── ImGui init ──
+    // ── ImGui ──
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -181,8 +208,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_ctx.device(), g_ctx.context());
 
-    VEGA_LOG_INFO("ImGui initialized with docking support");
-
     // ── Main loop ──
     MSG msg = {};
     while (msg.message != WM_QUIT)
@@ -198,52 +223,37 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // Dockspace
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
         // ── Keyboard shortcuts ──
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O))
             openRawFile();
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && g_has_image)
+            vega::saveRecipe(g_current_path, g_recipe);
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && g_history.canUndo())
+        {
+            g_recipe = g_history.undo();
+            reprocessPipeline();
+        }
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y) && g_history.canRedo())
+        {
+            g_recipe = g_history.redo();
+            reprocessPipeline();
+        }
 
         // ── Develop Panel ──
         ImGui::Begin("Develop");
         {
-            static float exposure    = 0.0f;
-            static float contrast    = 0.0f;
-            static float highlights  = 0.0f;
-            static float shadows     = 0.0f;
-            static float whites      = 0.0f;
-            static float blacks      = 0.0f;
-            static float temperature = 5500.0f;
-            static float tint        = 0.0f;
+            if (g_develop_panel.render(g_recipe, g_history))
+                reprocessPipeline();
 
-            if (ImGui::CollapsingHeader("White Balance", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                ImGui::SliderFloat("Temperature", &temperature, 2000.0f, 12000.0f);
-                ImGui::SliderFloat("Tint", &tint, -150.0f, 150.0f);
-            }
-
-            if (ImGui::CollapsingHeader("Tone", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                ImGui::SliderFloat("Exposure",   &exposure,   -5.0f, 5.0f);
-                ImGui::SliderFloat("Contrast",   &contrast,   -100.0f, 100.0f);
-                ImGui::SliderFloat("Highlights", &highlights, -100.0f, 100.0f);
-                ImGui::SliderFloat("Shadows",    &shadows,    -100.0f, 100.0f);
-                ImGui::SliderFloat("Whites",     &whites,     -100.0f, 100.0f);
-                ImGui::SliderFloat("Blacks",     &blacks,     -100.0f, 100.0f);
-            }
-
-            if (g_has_image && ImGui::CollapsingHeader("Metadata", ImGuiTreeNodeFlags_DefaultOpen))
+            if (g_has_image && ImGui::CollapsingHeader("Metadata"))
             {
                 auto& m = g_raw_image.metadata;
                 ImGui::Text("Camera: %s %s", m.camera_make.c_str(), m.camera_model.c_str());
                 ImGui::Text("Lens: %s", m.lens_model.c_str());
-                ImGui::Text("ISO: %u", m.iso_speed);
-                ImGui::Text("Shutter: %.4fs", m.shutter_speed);
-                ImGui::Text("Aperture: f/%.1f", m.aperture);
-                ImGui::Text("Focal: %.0fmm", m.focal_length_mm);
-                ImGui::Text("Date: %s", m.datetime_original.c_str());
-                ImGui::Text("Size: %ux%u", g_raw_image.width, g_raw_image.height);
+                ImGui::Text("ISO: %u  Shutter: %.4fs  f/%.1f", m.iso_speed, m.shutter_speed, m.aperture);
+                ImGui::Text("Focal: %.0fmm  Date: %s", m.focal_length_mm, m.datetime_original.c_str());
             }
         }
         ImGui::End();
@@ -252,17 +262,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui::Begin("Viewport");
         {
             if (g_has_image && g_image_srv)
-            {
-                g_viewport.render(g_image_srv.Get(),
-                                  g_raw_image.width, g_raw_image.height);
-            }
+                g_viewport.render(g_image_srv.Get(), g_raw_image.width, g_raw_image.height);
             else
             {
                 ImVec2 avail = ImGui::GetContentRegionAvail();
-                ImVec2 text_size = ImGui::CalcTextSize("Ctrl+O to open a RAW file");
-                ImGui::SetCursorPos(ImVec2(
-                    (avail.x - text_size.x) * 0.5f,
-                    (avail.y - text_size.y) * 0.5f));
+                ImVec2 ts = ImGui::CalcTextSize("Ctrl+O to open a RAW file");
+                ImGui::SetCursorPos(ImVec2((avail.x - ts.x) * 0.5f, (avail.y - ts.y) * 0.5f));
                 ImGui::TextDisabled("Ctrl+O to open a RAW file");
             }
         }
@@ -270,15 +275,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
         // ── Histogram ──
         ImGui::Begin("Histogram");
-        ImGui::Text("Histogram placeholder");
+        g_histogram.render();
         ImGui::End();
 
         // ── Status Bar ──
         {
             ImGuiViewport* vp = ImGui::GetMainViewport();
-            float status_h = ImGui::GetFrameHeight();
-            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - status_h));
-            ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, status_h));
+            float sh = ImGui::GetFrameHeight();
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - sh));
+            ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, sh));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 2));
             ImGui::Begin("##StatusBar", nullptr,
                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -286,8 +291,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             ImGui::Text("%s", g_status_text.c_str());
             if (g_has_image)
             {
-                ImGui::SameLine(ImGui::GetWindowWidth() - 120);
-                ImGui::Text("Zoom: %.0f%%", g_viewport.zoom() * 100.0f);
+                ImGui::SameLine(ImGui::GetWindowWidth() - 240);
+                ImGui::Text("Zoom: %.0f%%  |  Undo: %d/%d",
+                    g_viewport.zoom() * 100.0f,
+                    g_history.currentIndex() + 1, g_history.totalEntries());
             }
             ImGui::End();
             ImGui::PopStyleVar();
@@ -295,10 +302,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
         // ── Render ──
         ImGui::Render();
-        const float clear_color[4] = { 0.08f, 0.08f, 0.10f, 1.0f };
+        const float cc[4] = { 0.08f, 0.08f, 0.10f, 1.0f };
         ID3D11RenderTargetView* rtv = g_ctx.rtv();
         g_ctx.context()->OMSetRenderTargets(1, &rtv, nullptr);
-        g_ctx.context()->ClearRenderTargetView(rtv, clear_color);
+        g_ctx.context()->ClearRenderTargetView(rtv, cc);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         g_ctx.present(true);
     }

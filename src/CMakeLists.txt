@@ -33,19 +33,29 @@ target_link_libraries(vega_gpu PUBLIC
     ${DXGI_LIB}
 )
 
-# ── Pipeline 函式庫 ──
+# ── Pipeline 函式庫 (Phase 2: full node-based pipeline) ──
 add_library(vega_pipeline STATIC
     pipeline/SimplePipeline.cpp
+    pipeline/EditRecipe.cpp
+    pipeline/EditHistory.cpp
+    pipeline/Pipeline.cpp
+    pipeline/cpu/WhiteBalanceNode.cpp
+    pipeline/cpu/ExposureNode.cpp
+    pipeline/cpu/ToneCurveNode.cpp
+    pipeline/cpu/HSLNode.cpp
+    pipeline/cpu/ColorSpaceNode.cpp
 )
 target_include_directories(vega_pipeline PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(vega_pipeline PUBLIC vega_core)
+target_link_libraries(vega_pipeline PUBLIC vega_core nlohmann_json::nlohmann_json)
 
 # ── UI 函式庫 ──
 add_library(vega_ui STATIC
     ui/ImageViewport.cpp
+    ui/DevelopPanel.cpp
+    ui/HistogramView.cpp
 )
 target_include_directories(vega_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(vega_ui PUBLIC imgui ${D3D11_LIB})
+target_link_libraries(vega_ui PUBLIC imgui vega_pipeline ${D3D11_LIB})
 
 # ── Raw 解碼函式庫 ──
 add_library(vega_raw STATIC
