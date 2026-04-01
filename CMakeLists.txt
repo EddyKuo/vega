@@ -5,18 +5,21 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# ── 第三方依賴 ──
-find_package(LibRaw CONFIG REQUIRED)
+# ── Phase 1 必要依賴 ──
+find_package(libraw CONFIG REQUIRED)
 find_package(lcms2 CONFIG REQUIRED)
-find_package(lensfun CONFIG REQUIRED)
 find_package(exiv2 CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
+find_package(Catch2 CONFIG REQUIRED)
+
+# ── Phase 1 暫時不需要但已安裝 ──
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)
 find_package(TIFF REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(spdlog CONFIG REQUIRED)
-find_package(Catch2 CONFIG REQUIRED)
+
+# ── 後續 Phase 才需要 (lensfun will be added when needed) ──
 
 # ── DirectX 11 (Windows SDK 內建) ──
 find_library(D3D11_LIB d3d11)

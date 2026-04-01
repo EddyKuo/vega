@@ -22,6 +22,39 @@ add_library(vega_core STATIC
 target_include_directories(vega_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(vega_core PUBLIC spdlog::spdlog)
 
+# ── GPU 靜態函式庫 ──
+add_library(vega_gpu STATIC
+    gpu/D3D11Context.cpp
+)
+target_include_directories(vega_gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vega_gpu PUBLIC
+    vega_core
+    ${D3D11_LIB}
+    ${DXGI_LIB}
+)
+
+# ── Pipeline 函式庫 ──
+add_library(vega_pipeline STATIC
+    pipeline/SimplePipeline.cpp
+)
+target_include_directories(vega_pipeline PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vega_pipeline PUBLIC vega_core)
+
+# ── UI 函式庫 ──
+add_library(vega_ui STATIC
+    ui/ImageViewport.cpp
+)
+target_include_directories(vega_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vega_ui PUBLIC imgui ${D3D11_LIB})
+
+# ── Raw 解碼函式庫 ──
+add_library(vega_raw STATIC
+    raw/RawDecoder.cpp
+    raw/ExifReader.cpp
+)
+target_include_directories(vega_raw PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vega_raw PUBLIC vega_core libraw::raw Exiv2::exiv2lib)
+
 # ── 主程式 ──
 add_executable(vega WIN32
     main.cpp
@@ -29,10 +62,15 @@ add_executable(vega WIN32
 )
 target_link_libraries(vega PRIVATE
     vega_core
+    vega_gpu
+    vega_pipeline
+    vega_ui
+    vega_raw
     imgui
     ${D3D11_LIB}
     ${D3DCOMPILER_LIB}
     ${DXGI_LIB}
     dwmapi
+    comdlg32
 )
 target_include_directories(vega PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

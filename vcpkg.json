@@ -2,16 +2,15 @@
   "name": "vega",
   "version-string": "0.1.0",
   "dependencies": [
-    { "name": "libraw", "version>=": "0.21.2" },
-    { "name": "lcms", "version>=": "2.16" },
-    { "name": "lensfun", "version>=": "0.3.4" },
-    { "name": "exiv2", "version>=": "0.28.3" },
-    { "name": "libjpeg-turbo", "version>=": "3.0" },
-    { "name": "libpng", "version>=": "1.6" },
-    { "name": "tiff", "version>=": "4.6" },
-    { "name": "sqlite3", "version>=": "3.46" },
-    { "name": "nlohmann-json", "version>=": "3.11" },
-    { "name": "spdlog", "version>=": "1.14" },
-    { "name": "catch2", "version>=": "3.7" }
+    "libraw",
+    "lcms",
+    "exiv2",
+    "libjpeg-turbo",
+    "libpng",
+    "tiff",
+    "sqlite3",
+    "nlohmann-json",
+    "spdlog",
+    "catch2"
   ]
 }
