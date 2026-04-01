@@ -14,7 +14,8 @@ namespace vega {
 
 Pipeline::Pipeline()
 {
-    buildNodeChain();
+    // Don't call buildNodeChain() here — this may be constructed as a static
+    // global before Logger::init(). Nodes are built lazily on first process().
 }
 
 void Pipeline::buildNodeChain()
@@ -324,6 +325,10 @@ std::vector<uint8_t> Pipeline::process(const RawImage& raw, const EditRecipe& re
 {
     if (raw.bayer_data.empty() || raw.width == 0 || raw.height == 0)
         return {};
+
+    // Lazy init: build node chain on first use (avoids static init order issues)
+    if (nodes_.empty())
+        buildNodeChain();
 
     Timer totalTimer;
     uint32_t width = raw.width;
