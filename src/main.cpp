@@ -292,9 +292,10 @@ static void buildDefaultLayout(ImGuiID dockspace_id)
     ImGuiID dock_right_top = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Up, 0.70f, nullptr, &dock_right_bottom);
 
     // Dock windows
-    ImGui::DockBuilderDockWindow(vega::tr(vega::S::PANEL_VIEWPORT), dock_left);
-    ImGui::DockBuilderDockWindow(vega::tr(vega::S::PANEL_DEVELOP), dock_right_top);
-    ImGui::DockBuilderDockWindow(vega::tr(vega::S::PANEL_HISTOGRAM), dock_right_bottom);
+    // Use fixed IDs (the part after ###) so dock layout survives language changes
+    ImGui::DockBuilderDockWindow("###viewport", dock_left);
+    ImGui::DockBuilderDockWindow("###develop", dock_right_top);
+    ImGui::DockBuilderDockWindow("###histogram", dock_right_bottom);
 
     ImGui::DockBuilderFinish(dockspace_id);
 }
@@ -432,13 +433,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
     applyVegaTheme();
 
-    // Load fonts: Segoe UI (Latin) + Microsoft JhengHei (CJK)
+    ImGui_ImplWin32_Init(g_hwnd);
+    ImGui_ImplDX11_Init(g_ctx.device(), g_ctx.context());
+
+    // Load fonts after backend init (ImGui requires backend before Build)
     {
         ImFontConfig latin_cfg;
         latin_cfg.SizePixels = 16.0f;
         io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f, &latin_cfg);
 
-        // Merge CJK glyphs from Microsoft JhengHei
         ImFontConfig cjk_cfg;
         cjk_cfg.MergeMode = true;
         cjk_cfg.SizePixels = 16.0f;
@@ -451,7 +454,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             0,
         };
         io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msjh.ttc", 16.0f, &cjk_cfg, cjk_ranges);
-        io.Fonts->Build();
         VEGA_LOG_INFO("Fonts loaded: Segoe UI + Microsoft JhengHei (CJK)");
     }
 
@@ -460,9 +462,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         vega::I18n::instance().setLanguage(vega::Lang::ZH_TW);
     else
         vega::I18n::instance().setLanguage(vega::Lang::EN);
-
-    ImGui_ImplWin32_Init(g_hwnd);
-    ImGui_ImplDX11_Init(g_ctx.device(), g_ctx.context());
 
     // Toolbar callbacks
     vega::Toolbar::Callbacks tb_cb;
@@ -578,7 +577,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             g_viewport.activateEyedropper();
 
         // ── Develop Panel ──
-        ImGui::Begin(vega::tr(vega::S::PANEL_DEVELOP));
+        {
+        char dev_title[128];
+        snprintf(dev_title, sizeof(dev_title), "%s###develop", vega::tr(vega::S::PANEL_DEVELOP));
+        ImGui::Begin(dev_title);
         {
             if (g_develop_panel.render(g_recipe, g_history))
                 reprocessPipeline();
@@ -594,10 +596,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             }
         }
         ImGui::End();
+        }
 
         // ── Viewport ──
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::Begin(vega::tr(vega::S::PANEL_VIEWPORT));
+        {
+        char vp_title[128];
+        snprintf(vp_title, sizeof(vp_title), "%s###viewport", vega::tr(vega::S::PANEL_VIEWPORT));
+        ImGui::Begin(vp_title);
         {
             if (g_has_image && g_image_srv)
             {
@@ -618,12 +624,17 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             }
         }
         ImGui::End();
+        }
         ImGui::PopStyleVar();
 
         // ── Histogram ──
-        ImGui::Begin(vega::tr(vega::S::PANEL_HISTOGRAM));
+        {
+        char hist_title[128];
+        snprintf(hist_title, sizeof(hist_title), "%s###histogram", vega::tr(vega::S::PANEL_HISTOGRAM));
+        ImGui::Begin(hist_title);
         g_histogram.render();
         ImGui::End();
+        }
 
         // ── Export Dialog ──
         if (g_export_dialog.isOpen() && g_has_image)
