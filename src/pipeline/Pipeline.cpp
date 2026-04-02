@@ -3,6 +3,8 @@
 #include "pipeline/cpu/ExposureNode.h"
 #include "pipeline/cpu/ToneCurveNode.h"
 #include "pipeline/cpu/HSLNode.h"
+#include "pipeline/cpu/SharpenNode.h"
+#include "pipeline/cpu/DenoiseNode.h"
 #include "pipeline/cpu/ColorSpaceNode.h"
 #include "pipeline/cpu/FastMath.h"
 #include "core/Logger.h"
@@ -26,6 +28,8 @@ void Pipeline::buildNodeChain()
     nodes_.push_back(std::make_unique<ExposureNode>());
     nodes_.push_back(std::make_unique<ToneCurveNode>());
     nodes_.push_back(std::make_unique<HSLNode>());
+    nodes_.push_back(std::make_unique<DenoiseNode>());
+    nodes_.push_back(std::make_unique<SharpenNode>());
     // ColorSpaceNode removed — sRGB gamma is now applied in toRGBA8 via LUT
 
     VEGA_LOG_INFO("Pipeline: built node chain with {} nodes", nodes_.size());

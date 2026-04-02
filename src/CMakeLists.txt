@@ -52,6 +52,8 @@ add_library(vega_pipeline STATIC
     pipeline/cpu/ExposureNode.cpp
     pipeline/cpu/ToneCurveNode.cpp
     pipeline/cpu/HSLNode.cpp
+    pipeline/cpu/SharpenNode.cpp
+    pipeline/cpu/DenoiseNode.cpp
     pipeline/cpu/ColorSpaceNode.cpp
 )
 target_include_directories(vega_pipeline PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
