@@ -50,6 +50,7 @@ AppSettings AppSettings::load()
         // UI
         if (j.contains("ui_scale"))      settings.ui_scale       = j["ui_scale"].get<float>();
         if (j.contains("dark_theme"))    settings.dark_theme     = j["dark_theme"].get<bool>();
+        if (j.contains("language"))      settings.language        = j["language"].get<std::string>();
 
         // Performance
         if (j.contains("use_gpu"))       settings.use_gpu        = j["use_gpu"].get<bool>();
@@ -111,6 +112,7 @@ void AppSettings::save() const
     // UI
     j["ui_scale"]        = ui_scale;
     j["dark_theme"]      = dark_theme;
+    j["language"]        = language;
 
     // Performance
     j["use_gpu"]         = use_gpu;

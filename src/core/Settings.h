@@ -13,6 +13,7 @@ struct AppSettings {
     // UI
     float ui_scale = 1.0f;
     bool dark_theme = true;
+    std::string language = "en";  // "en" or "zh_tw"
 
     // Performance
     bool use_gpu = true;

@@ -29,6 +29,7 @@
 #include "ui/ExportDialog.h"
 #include "ui/Toolbar.h"
 #include "ui/StatusBar.h"
+#include "core/i18n.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -291,9 +292,9 @@ static void buildDefaultLayout(ImGuiID dockspace_id)
     ImGuiID dock_right_top = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Up, 0.70f, nullptr, &dock_right_bottom);
 
     // Dock windows
-    ImGui::DockBuilderDockWindow("Viewport", dock_left);
-    ImGui::DockBuilderDockWindow("Develop", dock_right_top);
-    ImGui::DockBuilderDockWindow("Histogram", dock_right_bottom);
+    ImGui::DockBuilderDockWindow(vega::tr(vega::S::PANEL_VIEWPORT), dock_left);
+    ImGui::DockBuilderDockWindow(vega::tr(vega::S::PANEL_DEVELOP), dock_right_top);
+    ImGui::DockBuilderDockWindow(vega::tr(vega::S::PANEL_HISTOGRAM), dock_right_bottom);
 
     ImGui::DockBuilderFinish(dockspace_id);
 }
@@ -301,62 +302,79 @@ static void buildDefaultLayout(ImGuiID dockspace_id)
 // ── Menu bar ──
 static void renderMenuBar()
 {
+    using namespace vega;
     if (ImGui::BeginMainMenuBar())
     {
-        if (ImGui::BeginMenu("File"))
+        if (ImGui::BeginMenu(tr(S::MENU_FILE)))
         {
-            if (ImGui::MenuItem("Open RAW...", "Ctrl+O"))
+            if (ImGui::MenuItem(tr(S::MENU_OPEN), "Ctrl+O"))
                 openRawFile();
-            if (ImGui::MenuItem("Save Recipe", "Ctrl+S", false, g_has_image))
-                vega::saveRecipe(g_current_path, g_recipe);
+            if (ImGui::MenuItem(tr(S::MENU_SAVE_RECIPE), "Ctrl+S", false, g_has_image))
+                saveRecipe(g_current_path, g_recipe);
             ImGui::Separator();
-            if (ImGui::MenuItem("Export...", "Ctrl+Shift+E", false, g_has_image))
+            if (ImGui::MenuItem(tr(S::MENU_EXPORT), "Ctrl+Shift+E", false, g_has_image))
                 g_export_dialog.open(g_current_path);
             ImGui::Separator();
-            if (ImGui::MenuItem("Exit", "Alt+F4"))
+            if (ImGui::MenuItem(tr(S::MENU_EXIT), "Alt+F4"))
                 PostQuitMessage(0);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Edit"))
+        if (ImGui::BeginMenu(tr(S::MENU_EDIT)))
         {
-            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, g_history.canUndo()))
+            if (ImGui::MenuItem(tr(S::MENU_UNDO), "Ctrl+Z", false, g_history.canUndo()))
             {
                 g_recipe = g_history.undo();
                 reprocessPipeline();
             }
-            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, g_history.canRedo()))
+            if (ImGui::MenuItem(tr(S::MENU_REDO), "Ctrl+Y", false, g_history.canRedo()))
             {
                 g_recipe = g_history.redo();
                 reprocessPipeline();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Reset All", "Ctrl+Shift+R", false, g_has_image))
+            if (ImGui::MenuItem(tr(S::MENU_RESET_ALL), "Ctrl+Shift+R", false, g_has_image))
             {
-                vega::EditCommand cmd;
+                EditCommand cmd;
                 cmd.description = "Reset All";
                 cmd.before = g_recipe;
-                cmd.after = vega::EditRecipe{};
-                cmd.affected_stage = vega::PipelineStage::All;
+                cmd.after = EditRecipe{};
+                cmd.affected_stage = PipelineStage::All;
                 g_history.push(cmd);
                 g_recipe = cmd.after;
                 reprocessPipeline();
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("View"))
+        if (ImGui::BeginMenu(tr(S::MENU_VIEW)))
         {
-            if (ImGui::MenuItem("Fit to Window", "F"))
+            if (ImGui::MenuItem(tr(S::MENU_FIT), "F"))
             {
                 ImVec2 avail = ImGui::GetMainViewport()->WorkSize;
                 g_viewport.fitToWindow(avail, g_raw_image.width, g_raw_image.height);
             }
             if (ImGui::MenuItem("Zoom 100%", "1"))
-                ; // handled by viewport
+                ;
             if (ImGui::MenuItem("Zoom 200%", "2"))
                 ;
             ImGui::Separator();
-            if (ImGui::MenuItem("Before/After", "B", g_show_before_after))
+            if (ImGui::MenuItem(tr(S::MENU_BEFORE_AFTER), "B", g_show_before_after))
                 g_show_before_after = !g_show_before_after;
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu(tr(S::MENU_LANGUAGE)))
+        {
+            bool is_en = I18n::instance().language() == Lang::EN;
+            bool is_zh = I18n::instance().language() == Lang::ZH_TW;
+            if (ImGui::MenuItem("English", nullptr, is_en))
+            {
+                I18n::instance().setLanguage(Lang::EN);
+                g_settings.language = "en";
+            }
+            if (ImGui::MenuItem("\xE7\xB9\x81\xE9\xAB\x94\xE4\xB8\xAD\xE6\x96\x87", nullptr, is_zh))
+            {
+                I18n::instance().setLanguage(Lang::ZH_TW);
+                g_settings.language = "zh_tw";
+            }
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -413,6 +431,35 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     io.IniFilename = "vega_imgui.ini";
 
     applyVegaTheme();
+
+    // Load fonts: Segoe UI (Latin) + Microsoft JhengHei (CJK)
+    {
+        ImFontConfig latin_cfg;
+        latin_cfg.SizePixels = 16.0f;
+        io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f, &latin_cfg);
+
+        // Merge CJK glyphs from Microsoft JhengHei
+        ImFontConfig cjk_cfg;
+        cjk_cfg.MergeMode = true;
+        cjk_cfg.SizePixels = 16.0f;
+        static const ImWchar cjk_ranges[] = {
+            0x2000, 0x206F,   // General Punctuation
+            0x3000, 0x30FF,   // CJK Symbols, Hiragana, Katakana
+            0x31F0, 0x31FF,   // Katakana Phonetic Extensions
+            0x4E00, 0x9FFF,   // CJK Unified Ideographs
+            0xFF00, 0xFFEF,   // Halfwidth and Fullwidth Forms
+            0,
+        };
+        io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msjh.ttc", 16.0f, &cjk_cfg, cjk_ranges);
+        io.Fonts->Build();
+        VEGA_LOG_INFO("Fonts loaded: Segoe UI + Microsoft JhengHei (CJK)");
+    }
+
+    // Init i18n from settings
+    if (g_settings.language == "zh_tw")
+        vega::I18n::instance().setLanguage(vega::Lang::ZH_TW);
+    else
+        vega::I18n::instance().setLanguage(vega::Lang::EN);
 
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_ctx.device(), g_ctx.context());
@@ -531,7 +578,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             g_viewport.activateEyedropper();
 
         // ── Develop Panel ──
-        ImGui::Begin("Develop");
+        ImGui::Begin(vega::tr(vega::S::PANEL_DEVELOP));
         {
             if (g_develop_panel.render(g_recipe, g_history))
                 reprocessPipeline();
@@ -550,7 +597,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
         // ── Viewport ──
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::Begin("Viewport");
+        ImGui::Begin(vega::tr(vega::S::PANEL_VIEWPORT));
         {
             if (g_has_image && g_image_srv)
             {
@@ -564,7 +611,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             {
                 ImVec2 avail = ImGui::GetContentRegionAvail();
                 // Center welcome text
-                const char* welcome = "Ctrl+O or File > Open RAW to get started";
+                const char* welcome = vega::tr(vega::S::STATUS_OPEN_HINT);
                 ImVec2 ts = ImGui::CalcTextSize(welcome);
                 ImGui::SetCursorPos(ImVec2((avail.x - ts.x) * 0.5f, (avail.y - ts.y) * 0.5f));
                 ImGui::TextDisabled("%s", welcome);
@@ -574,7 +621,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui::PopStyleVar();
 
         // ── Histogram ──
-        ImGui::Begin("Histogram");
+        ImGui::Begin(vega::tr(vega::S::PANEL_HISTOGRAM));
         g_histogram.render();
         ImGui::End();
 
