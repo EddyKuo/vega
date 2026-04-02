@@ -1,4 +1,4 @@
-// src/main.cpp — Phase 2: Non-destructive editing pipeline
+// src/main.cpp — Phase 4: Before/After, Export, Keyboard Shortcuts
 #define NOMINMAX
 #include <windows.h>
 #include <commdlg.h>
@@ -20,6 +20,8 @@
 #include "ui/ImageViewport.h"
 #include "ui/DevelopPanel.h"
 #include "ui/HistogramView.h"
+#include "ui/BeforeAfter.h"
+#include "ui/ExportDialog.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -31,6 +33,8 @@ static vega::HistogramView g_histogram;
 static vega::Pipeline g_pipeline;
 static vega::EditRecipe g_recipe;
 static vega::EditHistory g_history;
+static vega::BeforeAfter g_before_after;
+static vega::ExportDialog g_export_dialog;
 
 // Current image state
 static vega::RawImage g_raw_image;
@@ -40,6 +44,12 @@ static ComPtr<ID3D11Texture2D> g_image_tex;
 static std::string g_status_text = "Ready — Ctrl+O to open a RAW file";
 static std::filesystem::path g_current_path;
 static std::vector<uint8_t> g_rgba_buffer;
+
+// Before/After state
+static ComPtr<ID3D11ShaderResourceView> g_before_srv;
+static ComPtr<ID3D11Texture2D> g_before_tex;
+static std::vector<uint8_t> g_before_rgba;
+static bool g_show_before_after = false;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
     HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -84,6 +94,40 @@ static void uploadImageToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint3
     HRESULT hr = g_ctx.device()->CreateTexture2D(&desc, &init, &g_image_tex);
     if (SUCCEEDED(hr))
         g_ctx.device()->CreateShaderResourceView(g_image_tex.Get(), nullptr, &g_image_srv);
+}
+
+// Upload RGBA8 buffer to a specified D3D11 texture + SRV pair
+static void uploadToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h,
+                        ComPtr<ID3D11Texture2D>& tex, ComPtr<ID3D11ShaderResourceView>& srv)
+{
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = w;
+    desc.Height = h;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc = {1, 0};
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA init = {};
+    init.pSysMem = rgba.data();
+    init.SysMemPitch = w * 4;
+
+    tex.Reset();
+    srv.Reset();
+    HRESULT hr = g_ctx.device()->CreateTexture2D(&desc, &init, &tex);
+    if (SUCCEEDED(hr))
+        g_ctx.device()->CreateShaderResourceView(tex.Get(), nullptr, &srv);
+}
+
+// Generate the "before" image (default recipe) for comparison
+static void generateBeforeImage()
+{
+    if (!g_has_image) return;
+    vega::EditRecipe default_recipe;
+    g_before_rgba = g_pipeline.process(g_raw_image, default_recipe);
+    uploadToGPU(g_before_rgba, g_raw_image.width, g_raw_image.height, g_before_tex, g_before_srv);
 }
 
 // Re-process the pipeline with current recipe and update display
@@ -155,6 +199,9 @@ static void openRawFile()
 
     // Process pipeline
     reprocessPipeline();
+
+    // Generate "before" image for comparison (default recipe)
+    generateBeforeImage();
 
     g_status_text = g_current_path.filename().string() +
         " | " + g_raw_image.metadata.camera_make +
@@ -241,6 +288,35 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             reprocessPipeline();
         }
 
+        // Ctrl+Shift+E: Export
+        if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E) && g_has_image)
+            g_export_dialog.open(g_current_path);
+
+        // B: Toggle before/after view
+        if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !io.KeyCtrl && !io.KeyAlt)
+            g_show_before_after = !g_show_before_after;
+
+        // M: Cycle before/after mode (when in before/after view)
+        if (ImGui::IsKeyPressed(ImGuiKey_M, false) && g_show_before_after)
+            g_before_after.toggleMode();
+
+        // Backslash: Hold to show "before" in Toggle mode
+        if (g_show_before_after)
+            g_before_after.setShowBefore(ImGui::IsKeyDown(ImGuiKey_Backslash));
+
+        // R: Reset all edits to default
+        if (ImGui::IsKeyPressed(ImGuiKey_R, false) && io.KeyCtrl && io.KeyShift && g_has_image)
+        {
+            vega::EditCommand reset_cmd;
+            reset_cmd.description = "Reset All";
+            reset_cmd.before = g_recipe;
+            reset_cmd.after = vega::EditRecipe{};
+            reset_cmd.affected_stage = vega::PipelineStage::All;
+            g_history.push(reset_cmd);
+            g_recipe = reset_cmd.after;
+            reprocessPipeline();
+        }
+
         // ── Develop Panel ──
         ImGui::Begin("Develop");
         {
@@ -262,7 +338,17 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui::Begin("Viewport");
         {
             if (g_has_image && g_image_srv)
-                g_viewport.render(g_image_srv.Get(), g_raw_image.width, g_raw_image.height);
+            {
+                if (g_show_before_after && g_before_srv)
+                {
+                    g_before_after.render(g_before_srv.Get(), g_image_srv.Get(),
+                                          g_raw_image.width, g_raw_image.height);
+                }
+                else
+                {
+                    g_viewport.render(g_image_srv.Get(), g_raw_image.width, g_raw_image.height);
+                }
+            }
             else
             {
                 ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -272,6 +358,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             }
         }
         ImGui::End();
+
+        // ── Export Dialog ──
+        if (g_export_dialog.isOpen() && g_has_image)
+            g_export_dialog.render(g_rgba_buffer, g_raw_image.width, g_raw_image.height);
 
         // ── Histogram ──
         ImGui::Begin("Histogram");
@@ -291,10 +381,26 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             ImGui::Text("%s", g_status_text.c_str());
             if (g_has_image)
             {
-                ImGui::SameLine(ImGui::GetWindowWidth() - 240);
-                ImGui::Text("Zoom: %.0f%%  |  Undo: %d/%d",
-                    g_viewport.zoom() * 100.0f,
-                    g_history.currentIndex() + 1, g_history.totalEntries());
+                ImGui::SameLine(ImGui::GetWindowWidth() - 400);
+                if (g_show_before_after)
+                {
+                    const char* mode_str = "Split";
+                    switch (g_before_after.mode()) {
+                    case vega::BeforeAfter::Mode::SideBySide: mode_str = "Side"; break;
+                    case vega::BeforeAfter::Mode::SplitView:  mode_str = "Split"; break;
+                    case vega::BeforeAfter::Mode::Toggle:     mode_str = "Toggle"; break;
+                    }
+                    ImGui::Text("B/A: %s  |  Zoom: %.0f%%  |  Undo: %d/%d",
+                        mode_str,
+                        g_viewport.zoom() * 100.0f,
+                        g_history.currentIndex() + 1, g_history.totalEntries());
+                }
+                else
+                {
+                    ImGui::Text("Zoom: %.0f%%  |  Undo: %d/%d",
+                        g_viewport.zoom() * 100.0f,
+                        g_history.currentIndex() + 1, g_history.totalEntries());
+                }
             }
             ImGui::End();
             ImGui::PopStyleVar();
@@ -313,6 +419,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     // ── Cleanup ──
     g_image_srv.Reset();
     g_image_tex.Reset();
+    g_before_srv.Reset();
+    g_before_tex.Reset();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
