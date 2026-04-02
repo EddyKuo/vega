@@ -53,7 +53,7 @@ static ComPtr<ID3D11ShaderResourceView> g_image_srv;
 static ComPtr<ID3D11Texture2D> g_image_tex;
 static ComPtr<ID3D11ShaderResourceView> g_before_srv;
 static ComPtr<ID3D11Texture2D> g_before_tex;
-static std::vector<uint8_t> g_rgba_buffer;
+static const std::vector<uint8_t>* g_rgba_ptr = nullptr;
 static std::vector<uint8_t> g_before_rgba;
 static std::filesystem::path g_current_path;
 static bool g_show_before_after = false;
@@ -116,10 +116,11 @@ static void reprocessPipeline()
 {
     if (!g_has_image) return;
     vega::Timer timer;
-    g_rgba_buffer = g_pipeline.process(g_raw_image, g_recipe);
+    const auto& rgba = g_pipeline.process(g_raw_image, g_recipe);
+    g_rgba_ptr = &rgba;
     g_last_pipeline_ms = timer.elapsed_ms();
-    uploadToGPU(g_rgba_buffer, g_raw_image.width, g_raw_image.height, g_image_tex, g_image_srv);
-    g_histogram.compute(g_rgba_buffer.data(), g_raw_image.width, g_raw_image.height);
+    uploadToGPU(rgba, g_raw_image.width, g_raw_image.height, g_image_tex, g_image_srv);
+    g_histogram.compute(rgba.data(), g_raw_image.width, g_raw_image.height);
 }
 
 static void generateBeforeImage()
@@ -530,7 +531,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
         // ── Export Dialog ──
         if (g_export_dialog.isOpen() && g_has_image)
-            g_export_dialog.render(g_rgba_buffer, g_raw_image.width, g_raw_image.height);
+            if (g_rgba_ptr)
+                g_export_dialog.render(*g_rgba_ptr, g_raw_image.width, g_raw_image.height);
 
         // ── Status Bar ──
         {

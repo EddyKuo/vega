@@ -23,7 +23,7 @@
       "inherits": "windows-x64-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_CXX_FLAGS": "/W4 /EHsc /O2 /fp:fast /arch:AVX2 /DNDEBUG"
+        "CMAKE_CXX_FLAGS": "/W4 /EHsc /O2 /fp:precise /arch:AVX2 /DNDEBUG"
       }
     }
   ],

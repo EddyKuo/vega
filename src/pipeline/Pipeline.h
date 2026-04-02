@@ -11,8 +11,9 @@ class Pipeline {
 public:
     Pipeline();
 
-    // Process a RawImage with the given recipe, output RGBA8 buffer
-    std::vector<uint8_t> process(const RawImage& raw, const EditRecipe& recipe);
+    // Process a RawImage with the given recipe, output RGBA8 buffer.
+    // Returns a reference to an internal buffer — valid until next process() call.
+    const std::vector<uint8_t>& process(const RawImage& raw, const EditRecipe& recipe);
 
     // Determine which stage was first affected by recipe change
     PipelineStage firstDirtyStage(const EditRecipe& old_recipe, const EditRecipe& new_recipe) const;
@@ -38,7 +39,8 @@ private:
 
     // Cached demosaic result (only recomputed when image changes)
     std::vector<float> demosaic_cache_;
-    std::vector<float> work_buffer_;  // reusable work buffer (avoids realloc)
+    std::vector<float> work_buffer_;   // reusable work buffer (avoids realloc)
+    std::vector<uint8_t> rgba_buffer_;  // reusable output buffer
     uint32_t demosaic_w_ = 0, demosaic_h_ = 0;
     const void* demosaic_src_ = nullptr;  // pointer to detect image change
 

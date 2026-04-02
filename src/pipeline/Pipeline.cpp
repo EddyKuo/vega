@@ -308,10 +308,12 @@ PipelineStage Pipeline::firstDirtyStage(const EditRecipe& old_r, const EditRecip
     return PipelineStage::All;
 }
 
-std::vector<uint8_t> Pipeline::process(const RawImage& raw, const EditRecipe& recipe)
+const std::vector<uint8_t>& Pipeline::process(const RawImage& raw, const EditRecipe& recipe)
 {
-    if (raw.bayer_data.empty() || raw.width == 0 || raw.height == 0)
-        return {};
+    if (raw.bayer_data.empty() || raw.width == 0 || raw.height == 0) {
+        rgba_buffer_.clear();
+        return rgba_buffer_;
+    }
 
     // Lazy init: build node chain on first use (avoids static init order issues)
     if (nodes_.empty())
@@ -386,21 +388,23 @@ std::vector<uint8_t> Pipeline::process(const RawImage& raw, const EditRecipe& re
         VEGA_LOG_DEBUG("Pipeline: node [{}] '{}': {:.1f}ms",
                        i, nodes_[i]->name(), nodeMs);
 
-        // Cache the result after key stages (WhiteBalance, Exposure, HSL)
-        // These are the stages most likely to be adjusted interactively
-        PipelineStage nodeStage = nodes_[i]->stage();
-        if (nodeStage & (PipelineStage::WhiteBalance | PipelineStage::Exposure | PipelineStage::HSL)) {
-            storeCache(nodeStage, recipe, rgb, width, height);
+        // Only cache after the first node (WhiteBalance) — it's the demosaic
+        // entry point and caching later stages copies too much data for too
+        // little benefit during interactive editing.
+        if (i == 0) {
+            storeCache(nodes_[i]->stage(), recipe, rgb, width, height);
         }
     }
 
-    // Step 3: Convert float RGB to RGBA8
-    std::vector<uint8_t> rgba(static_cast<size_t>(pixel_count) * 4);
-    toRGBA8(rgb.data(), rgba.data(), pixel_count);
+    // Step 3: Convert float RGB to RGBA8 (gamma via LUT)
+    Timer finalTimer;
+    rgba_buffer_.resize(static_cast<size_t>(pixel_count) * 4);
+    toRGBA8(rgb.data(), rgba_buffer_.data(), pixel_count);
+    VEGA_LOG_DEBUG("Pipeline: toRGBA8: {:.1f}ms", finalTimer.elapsed_ms());
 
     VEGA_LOG_INFO("Pipeline: total processing time: {:.1f}ms", totalTimer.elapsed_ms());
 
-    return rgba;
+    return rgba_buffer_;
 }
 
 } // namespace vega
