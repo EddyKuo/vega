@@ -46,6 +46,9 @@ static vega::Toolbar g_toolbar;
 static vega::StatusBar g_status_bar;
 static vega::AppSettings g_settings;
 
+// Window
+static HWND g_hwnd = nullptr;
+
 // Image state
 static vega::RawImage g_raw_image;
 static bool g_has_image = false;
@@ -197,6 +200,11 @@ static void openRawFile()
     g_status_bar.camera_info = m.camera_make + " " + m.camera_model;
     g_status_bar.resolution = std::to_string(g_raw_image.width) + "x" + std::to_string(g_raw_image.height);
     g_status_bar.pipeline_ms = decode_ms;
+
+    // Update window title
+    std::wstring title = L"Vega - " +
+        std::wstring(g_current_path.filename().wstring());
+    SetWindowTextW(g_hwnd, title.c_str());
 }
 
 // ── Vega dark theme ──
@@ -376,26 +384,26 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     wc.lpszClassName = L"VegaEditor";
     RegisterClassExW(&wc);
 
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"Vega - RAW Photo Editor",
+    g_hwnd = CreateWindowW(wc.lpszClassName, L"Vega - RAW Photo Editor",
         WS_OVERLAPPEDWINDOW,
         g_settings.window_x, g_settings.window_y,
         g_settings.window_w, g_settings.window_h,
         nullptr, nullptr, hInst, nullptr);
 
-    if (!g_ctx.initialize(hwnd, g_settings.window_w, g_settings.window_h))
+    if (!g_ctx.initialize(g_hwnd, g_settings.window_w, g_settings.window_h))
     {
         VEGA_LOG_ERROR("Failed to initialize D3D11");
         return 1;
     }
 
-    vega::WindowsIntegration::setDarkTitleBar(hwnd);
-    vega::WindowsIntegration::enableDragDrop(hwnd);
+    vega::WindowsIntegration::setDarkTitleBar(g_hwnd);
+    vega::WindowsIntegration::enableDragDrop(g_hwnd);
 
     if (g_settings.maximized)
-        ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+        ShowWindow(g_hwnd, SW_SHOWMAXIMIZED);
     else
-        ShowWindow(hwnd, nCmdShow);
-    UpdateWindow(hwnd);
+        ShowWindow(g_hwnd, nCmdShow);
+    UpdateWindow(g_hwnd);
 
     // ImGui
     IMGUI_CHECKVERSION();
@@ -406,7 +414,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
     applyVegaTheme();
 
-    ImGui_ImplWin32_Init(hwnd);
+    ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_ctx.device(), g_ctx.context());
 
     // Toolbar callbacks
@@ -426,6 +434,44 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     tb_cb.on_mode_grid = []{};
     tb_cb.on_mode_develop = []{};
     g_toolbar.setCallbacks(tb_cb);
+
+    // WB Eyedropper callback: sample pixel from the demosaiced linear data
+    g_viewport.setEyedropperCallback([](uint32_t x, uint32_t y) {
+        if (!g_has_image) return;
+        // Sample from the pipeline's demosaic cache (linear RGB before WB)
+        // For simplicity, sample from the current RGBA output and reverse gamma
+        if (!g_rgba_ptr || g_rgba_ptr->empty()) return;
+        uint32_t w = g_raw_image.width;
+        size_t idx = (static_cast<size_t>(y) * w + x) * 4;
+        if (idx + 2 >= g_rgba_ptr->size()) return;
+
+        float r = (*g_rgba_ptr)[idx + 0] / 255.0f;
+        float g = (*g_rgba_ptr)[idx + 1] / 255.0f;
+        float b = (*g_rgba_ptr)[idx + 2] / 255.0f;
+
+        // The sampled pixel should be neutral grey — adjust WB to make it so.
+        // Average the picked color and compute temperature shift.
+        float avg = (r + g + b) / 3.0f;
+        if (avg < 0.01f) return; // too dark to sample
+
+        // Simple approach: adjust temperature based on blue/red ratio
+        float rb_ratio = (b + 0.001f) / (r + 0.001f);
+        // rb_ratio > 1 means too blue (need warmer), < 1 means too red (need cooler)
+        // Map to temperature: multiply current temp by inverse ratio
+        float new_temp = g_recipe.wb_temperature / std::sqrt(rb_ratio);
+        new_temp = std::clamp(new_temp, 2000.0f, 12000.0f);
+
+        vega::EditCommand cmd;
+        cmd.description = "WB Eyedropper";
+        cmd.before = g_recipe;
+        g_recipe.wb_temperature = new_temp;
+        cmd.after = g_recipe;
+        cmd.affected_stage = vega::PipelineStage::WhiteBalance;
+        g_history.push(cmd);
+
+        VEGA_LOG_INFO("WB Eyedropper: pixel ({},{}) RGB=({:.2f},{:.2f},{:.2f}) -> temp={:.0f}K",
+            x, y, r, g, b, new_temp);
+    });
 
     // Main loop
     MSG msg = {};
@@ -480,6 +526,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             g_before_after.toggleMode();
         if (g_show_before_after)
             g_before_after.setShowBefore(ImGui::IsKeyDown(ImGuiKey_Backslash));
+        // W: WB eyedropper
+        if (ImGui::IsKeyPressed(ImGuiKey_W, false) && !io.KeyCtrl && g_has_image)
+            g_viewport.activateEyedropper();
 
         // ── Develop Panel ──
         ImGui::Begin("Develop");
@@ -557,7 +606,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     // Save window state — use rcNormalPosition which is valid even when maximized
     {
         WINDOWPLACEMENT wp = {sizeof(wp)};
-        GetWindowPlacement(hwnd, &wp);
+        GetWindowPlacement(g_hwnd, &wp);
         g_settings.maximized = (wp.showCmd == SW_SHOWMAXIMIZED);
         RECT& r = wp.rcNormalPosition;
         g_settings.window_x = r.left;
@@ -579,7 +628,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     VEGA_LOG_DEBUG("ImGui shutdown");
     ImGui::DestroyContext();
     g_ctx.cleanup();
-    DestroyWindow(hwnd);
+    DestroyWindow(g_hwnd);
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
     VEGA_LOG_INFO("=== Vega shutdown complete ===");
     return 0;
