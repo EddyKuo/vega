@@ -73,13 +73,29 @@ void Pipeline::demosaicAndTransform(const RawImage& raw, std::vector<float>& rgb
     int h = static_cast<int>(height);
     uint32_t pattern = raw.metadata.bayer_pattern;
 
+    // Pre-compute white balance multipliers (normalized by green)
+    // WB must be applied BEFORE demosaic for correct interpolation
+    float wb_mul[3]; // R, G, B
+    {
+        float g_norm = (raw.wb_multipliers[1] + raw.wb_multipliers[3]) * 0.5f;
+        if (g_norm <= 0.0f) g_norm = 1.0f;
+        wb_mul[0] = raw.wb_multipliers[0] / g_norm;  // R scale
+        wb_mul[1] = 1.0f;                              // G = reference
+        wb_mul[2] = raw.wb_multipliers[2] / g_norm;   // B scale
+        VEGA_LOG_DEBUG("Pipeline: WB mul (pre-demosaic): R={:.3f} G={:.3f} B={:.3f}",
+            wb_mul[0], wb_mul[1], wb_mul[2]);
+    }
+
+    // Sample with WB baked in — each Bayer pixel is multiplied by its channel's WB
     auto sample = [&](int r, int c) -> float {
         r = clampCoord(r, h);
         c = clampCoord(c, w);
-        return bayer[r * w + c];
+        float val = bayer[r * w + c];
+        int ch = bayerChannel(pattern, r, c);
+        return val * wb_mul[ch]; // ch: 0=R, 1=G, 2=B
     };
 
-    // Bilinear demosaic
+    // Bilinear demosaic (on WB-corrected Bayer data)
     for (int r = 0; r < h; ++r) {
         for (int c = 0; c < w; ++c) {
             int ch = bayerChannel(pattern, r, c);
@@ -125,23 +141,9 @@ void Pipeline::demosaicAndTransform(const RawImage& raw, std::vector<float>& rgb
         }
     }
 
-    // Apply camera white balance (from RAW metadata, not the user's recipe WB)
-    {
-        float g_norm = (raw.wb_multipliers[1] + raw.wb_multipliers[3]) * 0.5f;
-        if (g_norm <= 0.0f) g_norm = 1.0f;
-        float r_scale = raw.wb_multipliers[0] / g_norm;
-        float b_scale = raw.wb_multipliers[2] / g_norm;
-
-        for (uint32_t i = 0; i < pixel_count; ++i) {
-            rgb_out[i * 3 + 0] *= r_scale;
-            // green stays at 1.0
-            rgb_out[i * 3 + 2] *= b_scale;
-        }
-    }
-
     // Apply camera color matrix (camera RGB -> linear sRGB)
-    // color_matrix stores LibRaw's rgb_cam[3][3] which converts camera
-    // color space directly to sRGB. No intermediate XYZ step needed.
+    // rgb_cam is a pure color space conversion matrix (no WB baked in).
+    // WB was already applied per-pixel in the sample() lambda above.
     {
         const float* M = raw.color_matrix;
         bool has_matrix = false;
