@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "ui/DevelopPanel.h"
+#include "core/Logger.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -110,6 +111,12 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
 
     any_changed = wb_changed || tone_changed || curve_changed ||
                   hsl_changed || detail_changed || fx_changed;
+
+    if (any_changed)
+    {
+        VEGA_LOG_TRACE("DevelopPanel: changed [WB:{} Tone:{} Curve:{} HSL:{} Detail:{} FX:{}]",
+            wb_changed, tone_changed, curve_changed, hsl_changed, detail_changed, fx_changed);
+    }
 
     // Drag-based undo grouping
     if (any_changed && !is_dragging_)

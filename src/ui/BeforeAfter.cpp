@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "ui/BeforeAfter.h"
+#include "core/Logger.h"
 #include <algorithm>
 
 namespace vega {
@@ -7,9 +8,9 @@ namespace vega {
 void BeforeAfter::toggleMode()
 {
     switch (mode_) {
-    case Mode::SideBySide: mode_ = Mode::SplitView; break;
-    case Mode::SplitView:  mode_ = Mode::Toggle;    break;
-    case Mode::Toggle:     mode_ = Mode::SideBySide; break;
+    case Mode::SideBySide: mode_ = Mode::SplitView; VEGA_LOG_DEBUG("BeforeAfter: SplitView"); break;
+    case Mode::SplitView:  mode_ = Mode::Toggle;    VEGA_LOG_DEBUG("BeforeAfter: Toggle"); break;
+    case Mode::Toggle:     mode_ = Mode::SideBySide; VEGA_LOG_DEBUG("BeforeAfter: SideBySide"); break;
     }
 }
 

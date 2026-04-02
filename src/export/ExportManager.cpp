@@ -325,6 +325,10 @@ bool ExportManager::exportImage(const std::vector<uint8_t>& rgba_data,
         }
     }
 
+    const char* fmt_names[] = {"JPEG", "TIFF8", "TIFF16", "PNG8", "PNG16"};
+    VEGA_LOG_INFO("Export: {} {}x{} -> {}", fmt_names[static_cast<int>(settings.format)],
+        width, height, output_path.string());
+
     // Resize if needed
     uint32_t out_w, out_h;
     computeResizedDimensions(width, height, settings, out_w, out_h);

@@ -165,15 +165,25 @@ static void openRawFile()
 
     g_raw_image = std::move(result.value());
     double decode_ms = timer.elapsed_ms();
+    VEGA_LOG_INFO("Decoded {}x{} in {:.1f}ms (black={}, white={})",
+        g_raw_image.width, g_raw_image.height, decode_ms,
+        g_raw_image.black_level, g_raw_image.white_level);
 
     vega::ExifReader::enrichMetadata(g_current_path, g_raw_image.metadata);
+    VEGA_LOG_INFO("EXIF: {} {} | ISO {} | {:.4f}s | f/{:.1f} | {}mm",
+        g_raw_image.metadata.camera_make, g_raw_image.metadata.camera_model,
+        g_raw_image.metadata.iso_speed, g_raw_image.metadata.shutter_speed,
+        g_raw_image.metadata.aperture, g_raw_image.metadata.focal_length_mm);
 
     auto saved = vega::loadRecipe(g_current_path);
+    if (saved) VEGA_LOG_INFO("Loaded .vgr sidecar recipe");
     g_recipe = saved ? *saved : vega::EditRecipe{};
     g_history.clear();
     g_has_image = true;
 
+    vega::Timer pipeline_timer;
     reprocessPipeline();
+    VEGA_LOG_INFO("Initial pipeline: {:.1f}ms", pipeline_timer.elapsed_ms());
     generateBeforeImage();
 
     // Fit image to viewport on first load
@@ -349,9 +359,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     vega::installCrashHandler();
     vega::WindowsIntegration::enableHighDPI();
     vega::Logger::init();
-    VEGA_LOG_INFO("Vega v0.1.0 starting...");
+    VEGA_LOG_INFO("=== Vega v0.1.0 starting ===");
+    VEGA_LOG_INFO("Log file: vega.log");
 
     g_settings = vega::AppSettings::load();
+    VEGA_LOG_INFO("Settings: maximized={} gpu={} preview_quality={}",
+        g_settings.maximized, g_settings.use_gpu, g_settings.preview_quality);
 
     // Window
     WNDCLASSEXW wc = {};
@@ -450,7 +463,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O))
             openRawFile();
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && g_has_image)
+        {
+            VEGA_LOG_INFO("Saving recipe: {}", g_current_path.string());
             vega::saveRecipe(g_current_path, g_recipe);
+        }
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && g_history.canUndo())
         { g_recipe = g_history.undo(); reprocessPipeline(); }
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y) && g_history.canRedo())
@@ -554,14 +570,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     }
 
     // Cleanup
+    VEGA_LOG_INFO("Shutting down...");
     g_image_srv.Reset(); g_image_tex.Reset();
     g_before_srv.Reset(); g_before_tex.Reset();
     ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
+    VEGA_LOG_DEBUG("ImGui shutdown");
     ImGui::DestroyContext();
     g_ctx.cleanup();
     DestroyWindow(hwnd);
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
-    VEGA_LOG_INFO("Vega shutdown complete");
+    VEGA_LOG_INFO("=== Vega shutdown complete ===");
     return 0;
 }
