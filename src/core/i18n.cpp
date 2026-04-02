@@ -115,6 +115,39 @@ void I18n::initEN()
     // Metadata
     m["meta.camera"]        = "Camera";
     m["meta.lens"]          = "Lens";
+
+    // Slider labels (used directly by vegaSlider)
+    m["Temperature"]        = "Temperature";
+    m["Tint"]               = "Tint";
+    m["Exposure"]           = "Exposure";
+    m["Contrast"]           = "Contrast";
+    m["Highlights"]         = "Highlights";
+    m["Shadows"]            = "Shadows";
+    m["Whites"]             = "Whites";
+    m["Blacks"]             = "Blacks";
+    m["Red"]                = "Red";
+    m["Orange"]             = "Orange";
+    m["Yellow"]             = "Yellow";
+    m["Green"]              = "Green";
+    m["Aqua"]               = "Aqua";
+    m["Blue"]               = "Blue";
+    m["Purple"]             = "Purple";
+    m["Magenta"]            = "Magenta";
+    m["Amount##sharp"]      = "Amount";
+    m["Radius##sharp"]      = "Radius";
+    m["Detail##sharp"]      = "Detail";
+    m["Masking##sharp"]     = "Masking";
+    m["Luminance##nr"]      = "Luminance";
+    m["Color##nr"]          = "Color";
+    m["Detail##nr"]         = "Detail";
+    m["Vibrance"]           = "Vibrance";
+    m["Saturation##effect"] = "Saturation";
+    m["Hue"]                = "Hue";
+    m["Saturation"]         = "Saturation";
+    m["Luminance"]          = "Luminance";
+    m["Metadata"]           = "Metadata";
+    m["Sharpening"]         = "Sharpening";
+    m["Noise Reduction"]    = "Noise Reduction";
 }
 
 void I18n::initZH()
@@ -199,6 +232,39 @@ void I18n::initZH()
     // Metadata
     m["meta.camera"]        = "\u76f8\u6a5f";           // 相機
     m["meta.lens"]          = "\u93e1\u982d";           // 鏡頭
+
+    // Slider labels (used directly by vegaSlider)
+    m["Temperature"]        = "\u8272\u6eab";           // 色溫
+    m["Tint"]               = "\u8272\u8abf";           // 色調
+    m["Exposure"]           = "\u66dd\u5149\u5ea6";     // 曝光度
+    m["Contrast"]           = "\u5c0d\u6bd4";           // 對比
+    m["Highlights"]         = "\u4eae\u90e8";           // 亮部
+    m["Shadows"]            = "\u6697\u90e8";           // 暗部
+    m["Whites"]             = "\u767d\u8272";           // 白色
+    m["Blacks"]             = "\u9ed1\u8272";           // 黑色
+    m["Red"]                = "\u7d05\u8272";           // 紅色
+    m["Orange"]             = "\u6a59\u8272";           // 橙色
+    m["Yellow"]             = "\u9ec3\u8272";           // 黃色
+    m["Green"]              = "\u7da0\u8272";           // 綠色
+    m["Aqua"]               = "\u6c34\u8272";           // 水色
+    m["Blue"]               = "\u85cd\u8272";           // 藍色
+    m["Purple"]             = "\u7d2b\u8272";           // 紫色
+    m["Magenta"]            = "\u6d0b\u7d05";           // 洋紅
+    m["Amount##sharp"]      = "\u7e3d\u91cf";           // 總量
+    m["Radius##sharp"]      = "\u534a\u5f91";           // 半徑
+    m["Detail##sharp"]      = "\u7d30\u7bc0";           // 細節
+    m["Masking##sharp"]     = "\u906e\u7f69";           // 遮罩
+    m["Luminance##nr"]      = "\u4eae\u5ea6";           // 亮度
+    m["Color##nr"]          = "\u8272\u5f69";           // 色彩
+    m["Detail##nr"]         = "\u7d30\u7bc0";           // 細節
+    m["Vibrance"]           = "\u81ea\u7136\u98fd\u548c\u5ea6"; // 自然飽和度
+    m["Saturation##effect"] = "\u98fd\u548c\u5ea6";     // 飽和度
+    m["Hue"]                = "\u8272\u76f8";           // 色相
+    m["Saturation"]         = "\u98fd\u548c\u5ea6";     // 飽和度
+    m["Luminance"]          = "\u660e\u5ea6";           // 明度
+    m["Metadata"]           = "\u5143\u8cc7\u6599";     // 元資料
+    m["Sharpening"]         = "\u92b3\u5229\u5316";     // 銳利化
+    m["Noise Reduction"]    = "\u964d\u566a";           // 降噪
 }
 
 } // namespace vega

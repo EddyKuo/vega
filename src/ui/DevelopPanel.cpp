@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "ui/DevelopPanel.h"
 #include "core/Logger.h"
+#include "core/i18n.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -17,10 +18,19 @@ bool DevelopPanel::vegaSlider(const char* label, float* value, float min_val, fl
 {
     float old_value = *value;
 
+    // Use label as stable ID, display translated text
     ImGui::PushID(label);
 
-    // The slider itself
-    bool changed = ImGui::SliderFloat(label, value, min_val, max_val, format);
+    // Build "TranslatedText###stableID" for the slider
+    char display[256];
+    const char* translated = tr(label);
+    // If tr() returned the key itself (no translation), use label as-is
+    if (translated == label || std::strcmp(translated, label) == 0)
+        snprintf(display, sizeof(display), "%s", label);
+    else
+        snprintf(display, sizeof(display), "%s###%s", translated, label);
+
+    bool changed = ImGui::SliderFloat(display, value, min_val, max_val, format);
 
     // Double-click: reset to default
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
@@ -37,7 +47,7 @@ bool DevelopPanel::vegaSlider(const char* label, float* value, float min_val, fl
 
     if (ImGui::BeginPopup("##precision_input"))
     {
-        ImGui::Text("%s", label);
+        ImGui::Text("%s", translated);
         ImGui::Separator();
         ImGui::SetNextItemWidth(120.0f);
         if (ImGui::InputFloat("##val", value, 0.1f, 1.0f, format))
@@ -158,7 +168,7 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
 
 bool DevelopPanel::renderWhiteBalance(EditRecipe& recipe)
 {
-    if (!ImGui::CollapsingHeader("White Balance", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader(tr(S::WB_HEADER), ImGuiTreeNodeFlags_DefaultOpen))
         return false;
 
     bool changed = false;
@@ -173,7 +183,7 @@ bool DevelopPanel::renderWhiteBalance(EditRecipe& recipe)
 
 bool DevelopPanel::renderTone(EditRecipe& recipe)
 {
-    if (!ImGui::CollapsingHeader("Tone", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader(tr(S::TONE_HEADER), ImGuiTreeNodeFlags_DefaultOpen))
         return false;
 
     bool changed = false;
@@ -248,7 +258,7 @@ static float evaluateCurveSpline(const std::vector<CurvePoint>& pts, float t)
 
 bool DevelopPanel::renderToneCurve(EditRecipe& recipe)
 {
-    if (!ImGui::CollapsingHeader("Tone Curve", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader(tr(S::CURVE_HEADER), ImGuiTreeNodeFlags_DefaultOpen))
         return false;
 
     bool changed = false;
@@ -495,12 +505,12 @@ bool DevelopPanel::renderToneCurve(EditRecipe& recipe)
 
 bool DevelopPanel::renderHSL(EditRecipe& recipe)
 {
-    if (!ImGui::CollapsingHeader("HSL / Color", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader(tr(S::HSL_HEADER), ImGuiTreeNodeFlags_DefaultOpen))
         return false;
 
     bool changed = false;
 
-    static const char* tab_names[] = { "Hue", "Saturation", "Luminance" };
+    const char* tab_names[] = { tr("Hue"), tr("Saturation"), tr("Luminance") };
     static const char* color_names[] = {
         "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta"
     };
@@ -558,13 +568,13 @@ bool DevelopPanel::renderHSL(EditRecipe& recipe)
 
 bool DevelopPanel::renderDetail(EditRecipe& recipe)
 {
-    if (!ImGui::CollapsingHeader("Detail", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader(tr(S::DETAIL_HEADER), ImGuiTreeNodeFlags_DefaultOpen))
         return false;
 
     bool changed = false;
 
     // Sharpening sub-section
-    ImGui::TextDisabled("Sharpening");
+    ImGui::TextDisabled("%s", tr("Sharpening"));
     ImGui::Spacing();
     changed |= vegaSlider("Amount##sharp",  &recipe.sharpen_amount,  0.0f, 150.0f, 0.0f,  "%.0f");
     changed |= vegaSlider("Radius##sharp",  &recipe.sharpen_radius,  0.5f, 3.0f,   1.0f,  "%.1f");
@@ -575,7 +585,7 @@ bool DevelopPanel::renderDetail(EditRecipe& recipe)
     ImGui::Spacing();
 
     // Noise Reduction sub-section
-    ImGui::TextDisabled("Noise Reduction");
+    ImGui::TextDisabled("%s", tr("Noise Reduction"));
     ImGui::Spacing();
     changed |= vegaSlider("Luminance##nr",  &recipe.denoise_luminance, 0.0f, 100.0f, 0.0f,  "%.0f");
     changed |= vegaSlider("Color##nr",      &recipe.denoise_color,     0.0f, 100.0f, 0.0f,  "%.0f");
@@ -590,7 +600,7 @@ bool DevelopPanel::renderDetail(EditRecipe& recipe)
 
 bool DevelopPanel::renderEffects(EditRecipe& recipe)
 {
-    if (!ImGui::CollapsingHeader("Effects", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader(tr(S::FX_HEADER), ImGuiTreeNodeFlags_DefaultOpen))
         return false;
 
     bool changed = false;

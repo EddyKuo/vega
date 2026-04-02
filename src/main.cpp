@@ -585,7 +585,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             if (g_develop_panel.render(g_recipe, g_history))
                 reprocessPipeline();
 
-            if (g_has_image && ImGui::CollapsingHeader("Metadata"))
+            if (g_has_image && ImGui::CollapsingHeader(vega::tr("Metadata")))
             {
                 auto& m = g_raw_image.metadata;
                 ImGui::Text("Camera: %s %s", m.camera_make.c_str(), m.camera_model.c_str());
