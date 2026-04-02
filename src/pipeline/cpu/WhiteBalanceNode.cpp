@@ -77,10 +77,34 @@ void WhiteBalanceNode::temperatureTintToRGB(float temperature_k, float tint,
 
 void WhiteBalanceNode::process(Tile& tile, const EditRecipe& recipe)
 {
-    float r_mul, g_mul, b_mul;
-    temperatureTintToRGB(recipe.wb_temperature, recipe.wb_tint, r_mul, g_mul, b_mul);
+    // The camera WB is already applied during demosaic. This node applies a
+    // RELATIVE correction: how the user's chosen temperature differs from the
+    // default (5500K). At default settings, multipliers should be [1,1,1].
+    static constexpr float DEFAULT_TEMP = 5500.0f;
+    static constexpr float DEFAULT_TINT = 0.0f;
 
-    VEGA_LOG_DEBUG("WhiteBalanceNode: temp={}K tint={} -> muls=[{:.3f}, {:.3f}, {:.3f}]",
+    // Skip if at defaults
+    if (std::abs(recipe.wb_temperature - DEFAULT_TEMP) < 1.0f &&
+        std::abs(recipe.wb_tint - DEFAULT_TINT) < 0.1f)
+    {
+        VEGA_LOG_DEBUG("WhiteBalanceNode: at defaults ({}K, tint {}), skipping",
+                       recipe.wb_temperature, recipe.wb_tint);
+        return;
+    }
+
+    // Compute multipliers for default and for the user's chosen temperature
+    float def_r, def_g, def_b;
+    temperatureTintToRGB(DEFAULT_TEMP, DEFAULT_TINT, def_r, def_g, def_b);
+
+    float usr_r, usr_g, usr_b;
+    temperatureTintToRGB(recipe.wb_temperature, recipe.wb_tint, usr_r, usr_g, usr_b);
+
+    // Relative correction = user / default
+    float r_mul = usr_r / def_r;
+    float g_mul = usr_g / def_g;
+    float b_mul = usr_b / def_b;
+
+    VEGA_LOG_DEBUG("WhiteBalanceNode: temp={}K tint={} -> relative muls=[{:.3f}, {:.3f}, {:.3f}]",
                    recipe.wb_temperature, recipe.wb_tint, r_mul, g_mul, b_mul);
 
     const uint32_t rows = tile.height;
