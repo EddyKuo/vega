@@ -30,7 +30,13 @@ void HistogramView::compute(const uint8_t* rgba_data, uint32_t width, uint32_t h
     total_pixels_ = width * height;
 
     const uint32_t pixel_count = width * height;
-    for (uint32_t i = 0; i < pixel_count; ++i)
+
+    // Sample every Nth pixel for large images — histogram doesn't need every pixel
+    // 500K samples is visually indistinguishable from full scan
+    const uint32_t max_samples = 500000;
+    const uint32_t step = pixel_count > max_samples ? pixel_count / max_samples : 1;
+
+    for (uint32_t i = 0; i < pixel_count; i += step)
     {
         uint8_t r = rgba_data[i * 4 + 0];
         uint8_t g = rgba_data[i * 4 + 1];
@@ -40,12 +46,10 @@ void HistogramView::compute(const uint8_t* rgba_data, uint32_t width, uint32_t h
         hist_g_[g]++;
         hist_b_[b]++;
 
-        // BT.601 luma
         uint8_t luma = static_cast<uint8_t>(
             std::clamp(0.299f * r + 0.587f * g + 0.114f * b, 0.0f, 255.0f));
         hist_luma_[luma]++;
 
-        // Clipping detection: any channel at absolute min or max
         if (r == 0 || g == 0 || b == 0)
             clip_shadow_++;
         if (r == 255 || g == 255 || b == 255)

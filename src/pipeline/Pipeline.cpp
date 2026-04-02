@@ -167,11 +167,34 @@ void Pipeline::demosaicAndTransform(const RawImage& raw, std::vector<float>& rgb
     }
 }
 
-void Pipeline::toRGBA8(const float* rgb, uint8_t* rgba, uint32_t pixel_count)
+void Pipeline::toRGBA8(const float* __restrict rgb, uint8_t* __restrict rgba, uint32_t pixel_count)
 {
-    // Combined gamma + quantize using the LUT — avoids a separate ColorSpace pass
     const auto& lut = gammaLUT();
-    for (uint32_t i = 0; i < pixel_count; ++i) {
+    const uint8_t* __restrict table = lut.table.data();
+    constexpr int LAST = SRGBGammaLUT::SIZE - 1;
+    constexpr float SCALE = static_cast<float>(LAST);
+
+    // Process 4 pixels per iteration to help vectorization
+    uint32_t i = 0;
+    const uint32_t count4 = pixel_count & ~3u;
+    for (; i < count4; i += 4)
+    {
+        const float* __restrict src = rgb + i * 3;
+        uint8_t* __restrict dst = rgba + i * 4;
+        for (int p = 0; p < 4; ++p)
+        {
+            float r = src[p * 3 + 0], g = src[p * 3 + 1], b = src[p * 3 + 2];
+            int ir = r <= 0.f ? 0 : (r >= 1.f ? LAST : static_cast<int>(r * SCALE + 0.5f));
+            int ig = g <= 0.f ? 0 : (g >= 1.f ? LAST : static_cast<int>(g * SCALE + 0.5f));
+            int ib = b <= 0.f ? 0 : (b >= 1.f ? LAST : static_cast<int>(b * SCALE + 0.5f));
+            dst[p * 4 + 0] = table[ir];
+            dst[p * 4 + 1] = table[ig];
+            dst[p * 4 + 2] = table[ib];
+            dst[p * 4 + 3] = 255;
+        }
+    }
+    for (; i < pixel_count; ++i)
+    {
         rgba[i * 4 + 0] = lut(rgb[i * 3 + 0]);
         rgba[i * 4 + 1] = lut(rgb[i * 3 + 1]);
         rgba[i * 4 + 2] = lut(rgb[i * 3 + 2]);
@@ -320,90 +343,47 @@ const std::vector<uint8_t>& Pipeline::process(const RawImage& raw, const EditRec
         buildNodeChain();
 
     Timer totalTimer;
-    uint32_t width = raw.width;
-    uint32_t height = raw.height;
-    uint32_t pixel_count = width * height;
+    const uint32_t width = raw.width;
+    const uint32_t height = raw.height;
+    const uint32_t pixel_count = width * height;
 
-    // Try to find a cache hit to skip early stages
-    size_t startNode = findCacheHit(recipe);
-
-    std::vector<float> rgb;
-
-    if (startNode > 0 && startNode <= nodes_.size()) {
-        // Find the matching cache entry
-        PipelineStage cachedStage = nodes_[startNode - 1]->stage();
-        for (const auto& entry : cache_) {
-            if (entry.stage == cachedStage && entry.width == width && entry.height == height) {
-                rgb = entry.data;
-                VEGA_LOG_INFO("Pipeline: resuming from cache after node [{}] '{}'",
-                              startNode - 1, nodes_[startNode - 1]->name());
-                break;
-            }
-        }
-        if (rgb.empty()) {
-            // Cache entry wasn't found (shouldn't happen), fall back
-            startNode = 0;
-        }
+    // Step 1: Demosaic (cached — only runs once per image)
+    const void* src_ptr = raw.bayer_data.data();
+    if (src_ptr != demosaic_src_ || demosaic_w_ != width || demosaic_h_ != height) {
+        Timer demosaicTimer;
+        demosaicAndTransform(raw, demosaic_cache_);
+        demosaic_src_ = src_ptr;
+        demosaic_w_ = width;
+        demosaic_h_ = height;
+        VEGA_LOG_INFO("Pipeline: demosaic + color transform: {:.1f}ms",
+                      demosaicTimer.elapsed_ms());
     }
 
-    if (startNode == 0) {
-        // Step 1: Demosaic and color transform (Bayer -> linear sRGB)
-        // Cache the result — only recompute if the image pointer changes
-        const void* src_ptr = raw.bayer_data.data();
-        if (src_ptr != demosaic_src_ || demosaic_w_ != width || demosaic_h_ != height) {
-            Timer demosaicTimer;
-            demosaicAndTransform(raw, demosaic_cache_);
-            demosaic_src_ = src_ptr;
-            demosaic_w_ = width;
-            demosaic_h_ = height;
-            VEGA_LOG_INFO("Pipeline: demosaic + color transform: {:.1f}ms",
-                          demosaicTimer.elapsed_ms());
-        } else {
-            VEGA_LOG_DEBUG("Pipeline: using cached demosaic result");
-        }
-        // Copy into reusable work buffer (avoids reallocation, memcpy is fast)
-        work_buffer_.resize(demosaic_cache_.size());
-        std::memcpy(work_buffer_.data(), demosaic_cache_.data(),
-                     demosaic_cache_.size() * sizeof(float));
-        rgb.swap(work_buffer_);  // zero-cost swap
-    }
+    // Copy demosaic result into work buffer (nodes modify in-place)
+    const size_t float_count = demosaic_cache_.size();
+    work_buffer_.resize(float_count);
+    std::memcpy(work_buffer_.data(), demosaic_cache_.data(), float_count * sizeof(float));
 
-    // Step 2: Run processing nodes
-    // Create a single tile covering the full image (no tiling for now)
+    // Step 2: Run all processing nodes
     Tile tile{};
-    tile.data = rgb.data();
+    tile.data = work_buffer_.data();
     tile.x = 0;
     tile.y = 0;
     tile.width = width;
     tile.height = height;
     tile.overlap = 0;
-    tile.stride = width * 3; // 3 channels, tightly packed
+    tile.stride = width * 3;
     tile.channels = 3;
 
-    for (size_t i = startNode; i < nodes_.size(); ++i) {
-        Timer nodeTimer;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
         nodes_[i]->process(tile, recipe);
-        double nodeMs = nodeTimer.elapsed_ms();
-
-        VEGA_LOG_DEBUG("Pipeline: node [{}] '{}': {:.1f}ms",
-                       i, nodes_[i]->name(), nodeMs);
-
-        // Only cache after the first node (WhiteBalance) — it's the demosaic
-        // entry point and caching later stages copies too much data for too
-        // little benefit during interactive editing.
-        if (i == 0) {
-            storeCache(nodes_[i]->stage(), recipe, rgb, width, height);
-        }
     }
 
-    // Step 3: Convert float RGB to RGBA8 (gamma via LUT)
-    Timer finalTimer;
+    // Step 3: Gamma + quantize to RGBA8
     rgba_buffer_.resize(static_cast<size_t>(pixel_count) * 4);
-    toRGBA8(rgb.data(), rgba_buffer_.data(), pixel_count);
-    VEGA_LOG_DEBUG("Pipeline: toRGBA8: {:.1f}ms", finalTimer.elapsed_ms());
+    toRGBA8(work_buffer_.data(), rgba_buffer_.data(), pixel_count);
 
-    VEGA_LOG_INFO("Pipeline: total processing time: {:.1f}ms", totalTimer.elapsed_ms());
-
+    VEGA_LOG_INFO("Pipeline: total: {:.1f}ms", totalTimer.elapsed_ms());
     return rgba_buffer_;
 }
 
