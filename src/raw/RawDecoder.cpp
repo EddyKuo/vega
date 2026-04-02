@@ -184,16 +184,23 @@ RawDecoder::decode(const std::filesystem::path& filepath) {
         img.wb_multipliers[c] = (cam_mul[c] > 0.0f) ? cam_mul[c] : 1.0f;
     }
 
-    // Colour matrix: camera RGB -> XYZ (3x3) ------------------------------
-    // LibRaw stores the inverse (XYZ -> camera) in rgb_cam, and the
-    // forward matrix in cam_xyz.  We use cam_xyz here so callers can go
-    // from camera space to XYZ directly.
-    // cam_xyz is [4][3]; we only take the first 3 rows (RGB).
+    // Colour matrix: camera RGB -> sRGB (3x3) --------------------------------
+    // LibRaw's rgb_cam[3][4] is the combined matrix that converts from camera
+    // color space directly to sRGB (already includes the XYZ intermediate step
+    // and white balance normalization). This is the same matrix dcraw uses.
+    // We store only the 3x3 portion (ignoring the 4th column for G2).
+    // When rgb_cam is used, we do NOT need xyz_to_srgb multiplication — the
+    // matrix already goes camera -> sRGB directly.
     for (int r = 0; r < 3; ++r) {
         for (int c = 0; c < 3; ++c) {
-            img.color_matrix[r * 3 + c] = lr->imgdata.color.cam_xyz[r][c];
+            img.color_matrix[r * 3 + c] = lr->imgdata.color.rgb_cam[r][c];
         }
     }
+
+    VEGA_LOG_DEBUG("RawDecoder: rgb_cam matrix: [{:.4f} {:.4f} {:.4f}] [{:.4f} {:.4f} {:.4f}] [{:.4f} {:.4f} {:.4f}]",
+        img.color_matrix[0], img.color_matrix[1], img.color_matrix[2],
+        img.color_matrix[3], img.color_matrix[4], img.color_matrix[5],
+        img.color_matrix[6], img.color_matrix[7], img.color_matrix[8]);
 
     // Metadata -------------------------------------------------------------
     fillMetadata(*lr, img.metadata);

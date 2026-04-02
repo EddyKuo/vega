@@ -142,52 +142,25 @@ void SimplePipeline::whiteBalance(float* rgb, uint32_t pixel_count,
 void SimplePipeline::colorTransform(float* rgb, uint32_t pixel_count,
                                     const float cam_to_xyz[9])
 {
-    // XYZ -> linear sRGB matrix (IEC 61966-2-1, D65)
-    static constexpr float xyz_to_srgb[9] = {
-         3.2404542f, -1.5371385f, -0.4985314f,
-        -0.9692660f,  1.8760108f,  0.0415560f,
-         0.0556434f, -0.2040259f,  1.0572252f
-    };
-
-    // Check if cam_to_xyz is all zeros (no matrix provided)
+    // color_matrix now stores LibRaw's rgb_cam[3][3] which converts camera
+    // color space directly to sRGB. Apply it directly, no XYZ intermediate.
     bool has_matrix = false;
     for (int i = 0; i < 9; ++i)
     {
-        if (cam_to_xyz[i] != 0.0f)
-        {
-            has_matrix = true;
-            break;
-        }
+        if (cam_to_xyz[i] != 0.0f) { has_matrix = true; break; }
     }
 
     if (!has_matrix)
-    {
-        // No camera matrix available — skip color transform, assume sRGB already.
         return;
-    }
 
-    // Compose: combined = xyz_to_srgb * cam_to_xyz
-    // This converts directly from camera RGB to linear sRGB.
-    float combined[9] = {};
-    for (int r = 0; r < 3; ++r)
-    {
-        for (int c = 0; c < 3; ++c)
-        {
-            combined[r * 3 + c] =
-                xyz_to_srgb[r * 3 + 0] * cam_to_xyz[0 * 3 + c] +
-                xyz_to_srgb[r * 3 + 1] * cam_to_xyz[1 * 3 + c] +
-                xyz_to_srgb[r * 3 + 2] * cam_to_xyz[2 * 3 + c];
-        }
-    }
-
+    const float* M = cam_to_xyz;
     for (uint32_t i = 0; i < pixel_count; ++i)
     {
         float* p = rgb + i * 3;
         float in_r = p[0], in_g = p[1], in_b = p[2];
-
-        p[0] = combined[0] * in_r + combined[1] * in_g + combined[2] * in_b;
-        p[1] = combined[3] * in_r + combined[4] * in_g + combined[5] * in_b;
-        p[2] = combined[6] * in_r + combined[7] * in_g + combined[8] * in_b;
+        p[0] = M[0] * in_r + M[1] * in_g + M[2] * in_b;
+        p[1] = M[3] * in_r + M[4] * in_g + M[5] * in_b;
+        p[2] = M[6] * in_r + M[7] * in_g + M[8] * in_b;
     }
 }
 
