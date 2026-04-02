@@ -552,20 +552,19 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         g_ctx.present(true);
     }
 
-    // Save window state
+    // Save window state — use rcNormalPosition which is valid even when maximized
     {
-        RECT r;
-        GetWindowRect(hwnd, &r);
         WINDOWPLACEMENT wp = {sizeof(wp)};
         GetWindowPlacement(hwnd, &wp);
         g_settings.maximized = (wp.showCmd == SW_SHOWMAXIMIZED);
-        if (!g_settings.maximized)
-        {
-            g_settings.window_x = r.left;
-            g_settings.window_y = r.top;
-            g_settings.window_w = r.right - r.left;
-            g_settings.window_h = r.bottom - r.top;
-        }
+        RECT& r = wp.rcNormalPosition;
+        g_settings.window_x = r.left;
+        g_settings.window_y = r.top;
+        g_settings.window_w = r.right - r.left;
+        g_settings.window_h = r.bottom - r.top;
+        VEGA_LOG_INFO("Saving window state: {}x{} at ({},{}) maximized={}",
+            g_settings.window_w, g_settings.window_h,
+            g_settings.window_x, g_settings.window_y, g_settings.maximized);
         g_settings.save();
     }
 

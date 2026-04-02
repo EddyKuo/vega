@@ -67,6 +67,21 @@ AppSettings AppSettings::load()
         VEGA_LOG_WARN("Failed to parse settings: {}, using defaults", e.what());
     }
 
+    // Validate window geometry — reject garbage values
+    if (settings.window_w < 200 || settings.window_h < 200 ||
+        settings.window_w > 8192 || settings.window_h > 8192 ||
+        settings.window_x < -4096 || settings.window_x > 8192 ||
+        settings.window_y < -4096 || settings.window_y > 8192)
+    {
+        VEGA_LOG_WARN("Invalid window geometry (x={}, y={}, w={}, h={}), resetting to defaults",
+            settings.window_x, settings.window_y, settings.window_w, settings.window_h);
+        settings.window_x = 100;
+        settings.window_y = 100;
+        settings.window_w = 1920;
+        settings.window_h = 1080;
+        settings.maximized = true;
+    }
+
     return settings;
 }
 
