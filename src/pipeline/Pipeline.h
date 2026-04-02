@@ -34,8 +34,12 @@ private:
     void buildNodeChain();
 
     // Demosaic the raw Bayer data to linear RGB float buffer.
-    // Reuses SimplePipeline's bilinear demosaic and camera color transform.
     static void demosaicAndTransform(const RawImage& raw, std::vector<float>& rgb_out);
+
+    // Cached demosaic result (only recomputed when image changes)
+    std::vector<float> demosaic_cache_;
+    uint32_t demosaic_w_ = 0, demosaic_h_ = 0;
+    const void* demosaic_src_ = nullptr;  // pointer to detect image change
 
     // Convert float RGB [0,1] buffer to RGBA8
     static void toRGBA8(const float* rgb, uint8_t* rgba, uint32_t pixel_count);

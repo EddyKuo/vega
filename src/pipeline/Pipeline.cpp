@@ -349,12 +349,20 @@ std::vector<uint8_t> Pipeline::process(const RawImage& raw, const EditRecipe& re
 
     if (startNode == 0) {
         // Step 1: Demosaic and color transform (Bayer -> linear sRGB)
-        {
+        // Cache the result — only recompute if the image pointer changes
+        const void* src_ptr = raw.bayer_data.data();
+        if (src_ptr != demosaic_src_ || demosaic_w_ != width || demosaic_h_ != height) {
             Timer demosaicTimer;
-            demosaicAndTransform(raw, rgb);
+            demosaicAndTransform(raw, demosaic_cache_);
+            demosaic_src_ = src_ptr;
+            demosaic_w_ = width;
+            demosaic_h_ = height;
             VEGA_LOG_INFO("Pipeline: demosaic + color transform: {:.1f}ms",
                           demosaicTimer.elapsed_ms());
+        } else {
+            VEGA_LOG_DEBUG("Pipeline: using cached demosaic result");
         }
+        rgb = demosaic_cache_;  // copy from cache (nodes will modify in-place)
     }
 
     // Step 2: Run processing nodes

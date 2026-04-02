@@ -3,25 +3,39 @@
 #include "core/Logger.h"
 #include <cmath>
 #include <algorithm>
+#include <array>
 
 namespace vega {
 
-float ColorSpaceNode::linearToSRGB(float x)
+// Pre-computed sRGB gamma LUT (65536 entries for 16-bit precision)
+static constexpr int LUT_SIZE = 65536;
+static std::array<float, LUT_SIZE> s_gamma_lut;
+static bool s_lut_initialized = false;
+
+static void initGammaLUT()
 {
-    if (x <= 0.0f)
-        return 0.0f;
-    if (x >= 1.0f)
-        return 1.0f;
-    if (x < 0.0031308f)
-        return 12.92f * x;
-    return 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
+    if (s_lut_initialized) return;
+    for (int i = 0; i < LUT_SIZE; ++i) {
+        float x = static_cast<float>(i) / static_cast<float>(LUT_SIZE - 1);
+        if (x < 0.0031308f)
+            s_gamma_lut[i] = 12.92f * x;
+        else
+            s_gamma_lut[i] = 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
+    }
+    s_lut_initialized = true;
+}
+
+static inline float lookupGamma(float x)
+{
+    if (x <= 0.0f) return 0.0f;
+    if (x >= 1.0f) return 1.0f;
+    int idx = static_cast<int>(x * (LUT_SIZE - 1) + 0.5f);
+    return s_gamma_lut[idx];
 }
 
 void ColorSpaceNode::process(Tile& tile, const EditRecipe& recipe)
 {
-    // For now, only sRGB output is supported.
-    // In the future, this node can branch based on recipe.output_colorspace.
-    VEGA_LOG_DEBUG("ColorSpaceNode: applying sRGB gamma transfer");
+    initGammaLUT();
 
     const uint32_t rows = tile.height;
     const uint32_t cols = tile.width;
@@ -32,9 +46,9 @@ void ColorSpaceNode::process(Tile& tile, const EditRecipe& recipe)
         float* rowPtr = tile.data + row * stride;
         for (uint32_t col = 0; col < cols; ++col) {
             float* px = rowPtr + col * ch;
-            px[0] = linearToSRGB(std::clamp(px[0], 0.0f, 1.0f));
-            px[1] = linearToSRGB(std::clamp(px[1], 0.0f, 1.0f));
-            px[2] = linearToSRGB(std::clamp(px[2], 0.0f, 1.0f));
+            px[0] = lookupGamma(px[0]);
+            px[1] = lookupGamma(px[1]);
+            px[2] = lookupGamma(px[2]);
         }
     }
 }
