@@ -8,7 +8,7 @@ struct AppSettings {
     // Window
     int window_x = 100, window_y = 100;
     int window_w = 1920, window_h = 1080;
-    bool maximized = false;
+    bool maximized = true;
 
     // UI
     float ui_scale = 1.0f;
