@@ -38,6 +38,7 @@ private:
 
     // Cached demosaic result (only recomputed when image changes)
     std::vector<float> demosaic_cache_;
+    std::vector<float> work_buffer_;  // reusable work buffer (avoids realloc)
     uint32_t demosaic_w_ = 0, demosaic_h_ = 0;
     const void* demosaic_src_ = nullptr;  // pointer to detect image change
 

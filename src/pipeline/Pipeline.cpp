@@ -4,6 +4,7 @@
 #include "pipeline/cpu/ToneCurveNode.h"
 #include "pipeline/cpu/HSLNode.h"
 #include "pipeline/cpu/ColorSpaceNode.h"
+#include "pipeline/cpu/FastMath.h"
 #include "core/Logger.h"
 #include "core/Timer.h"
 #include <cmath>
@@ -25,7 +26,7 @@ void Pipeline::buildNodeChain()
     nodes_.push_back(std::make_unique<ExposureNode>());
     nodes_.push_back(std::make_unique<ToneCurveNode>());
     nodes_.push_back(std::make_unique<HSLNode>());
-    nodes_.push_back(std::make_unique<ColorSpaceNode>());
+    // ColorSpaceNode removed — sRGB gamma is now applied in toRGBA8 via LUT
 
     VEGA_LOG_INFO("Pipeline: built node chain with {} nodes", nodes_.size());
     for (size_t i = 0; i < nodes_.size(); ++i) {
@@ -168,16 +169,12 @@ void Pipeline::demosaicAndTransform(const RawImage& raw, std::vector<float>& rgb
 
 void Pipeline::toRGBA8(const float* rgb, uint8_t* rgba, uint32_t pixel_count)
 {
+    // Combined gamma + quantize using the LUT — avoids a separate ColorSpace pass
+    const auto& lut = gammaLUT();
     for (uint32_t i = 0; i < pixel_count; ++i) {
-        float r = std::clamp(rgb[i * 3 + 0], 0.0f, 1.0f);
-        float g = std::clamp(rgb[i * 3 + 1], 0.0f, 1.0f);
-        float b = std::clamp(rgb[i * 3 + 2], 0.0f, 1.0f);
-
-        // At this point, data has already gone through ColorSpaceNode (sRGB gamma).
-        // Just quantize to 8-bit.
-        rgba[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f + 0.5f);
-        rgba[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f + 0.5f);
-        rgba[i * 4 + 2] = static_cast<uint8_t>(b * 255.0f + 0.5f);
+        rgba[i * 4 + 0] = lut(rgb[i * 3 + 0]);
+        rgba[i * 4 + 1] = lut(rgb[i * 3 + 1]);
+        rgba[i * 4 + 2] = lut(rgb[i * 3 + 2]);
         rgba[i * 4 + 3] = 255;
     }
 }
@@ -362,7 +359,11 @@ std::vector<uint8_t> Pipeline::process(const RawImage& raw, const EditRecipe& re
         } else {
             VEGA_LOG_DEBUG("Pipeline: using cached demosaic result");
         }
-        rgb = demosaic_cache_;  // copy from cache (nodes will modify in-place)
+        // Copy into reusable work buffer (avoids reallocation, memcpy is fast)
+        work_buffer_.resize(demosaic_cache_.size());
+        std::memcpy(work_buffer_.data(), demosaic_cache_.data(),
+                     demosaic_cache_.size() * sizeof(float));
+        rgb.swap(work_buffer_);  // zero-cost swap
     }
 
     // Step 2: Run processing nodes
@@ -382,8 +383,8 @@ std::vector<uint8_t> Pipeline::process(const RawImage& raw, const EditRecipe& re
         nodes_[i]->process(tile, recipe);
         double nodeMs = nodeTimer.elapsed_ms();
 
-        VEGA_LOG_INFO("Pipeline: node [{}] '{}': {:.1f}ms",
-                      i, nodes_[i]->name(), nodeMs);
+        VEGA_LOG_DEBUG("Pipeline: node [{}] '{}': {:.1f}ms",
+                       i, nodes_[i]->name(), nodeMs);
 
         // Cache the result after key stages (WhiteBalance, Exposure, HSL)
         // These are the stages most likely to be adjusted interactively
