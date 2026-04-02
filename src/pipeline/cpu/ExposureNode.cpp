@@ -12,15 +12,19 @@ void ExposureNode::process(Tile& tile, const EditRecipe& recipe)
     const float contrast = recipe.contrast;
     const float highlights = recipe.highlights;
     const float shadows = recipe.shadows;
+    const float whites = recipe.whites;
+    const float blacks = recipe.blacks;
 
-    VEGA_LOG_DEBUG("ExposureNode: ev={} contrast={} highlights={} shadows={}",
-                   exposure, contrast, highlights, shadows);
+    VEGA_LOG_DEBUG("ExposureNode: ev={} contrast={} highlights={} shadows={} whites={} blacks={}",
+                   exposure, contrast, highlights, shadows, whites, blacks);
 
     // Pre-compute constants
     const float exp_mul = std::pow(2.0f, exposure);
     const bool do_contrast = std::abs(contrast) > 0.01f;
     const bool do_highlights = std::abs(highlights) > 0.01f;
     const bool do_shadows = std::abs(shadows) > 0.01f;
+    const bool do_whites = std::abs(whites) > 0.01f;
+    const bool do_blacks = std::abs(blacks) > 0.01f;
 
     // Pre-compute contrast sigmoid constants (avoid per-pixel exp)
     float sig_k = 0, sig_offset = 0, sig_scale = 1;
@@ -75,6 +79,24 @@ void ExposureNode::process(Tile& tile, const EditRecipe& recipe)
                 r *= mul;
                 g *= mul;
                 b *= mul;
+            }
+
+            // Whites: boost/cut the brightest values (lum > 0.7)
+            if (do_whites) {
+                float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+                float mask = vega_clamp01((lum - 0.7f) * (1.0f / 0.3f));
+                mask *= mask;
+                float adj = 1.0f + (whites / 100.0f) * mask * 0.6f;
+                r *= adj; g *= adj; b *= adj;
+            }
+
+            // Blacks: lift/crush the darkest values (lum < 0.3)
+            if (do_blacks) {
+                float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+                float mask = vega_clamp01(1.0f - lum * (1.0f / 0.3f));
+                mask *= mask;
+                float adj = 1.0f + (blacks / 100.0f) * mask * 0.6f;
+                r *= adj; g *= adj; b *= adj;
             }
 
             // Contrast

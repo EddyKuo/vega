@@ -1,134 +1,102 @@
+#define NOMINMAX
 #include "pipeline/cpu/HSLNode.h"
+#include "pipeline/cpu/FastMath.h"
 #include "pipeline/EditRecipe.h"
 #include "core/Logger.h"
 #include <cmath>
 #include <algorithm>
+#include <array>
 
 namespace vega {
 
-// PI constant
-static constexpr float kPi = 3.14159265358979323846f;
-
-void HSLNode::rgbToHSL(float r, float g, float b, float& h, float& s, float& l)
+// Fast RGB to HSL (no std::fmod, minimal branching)
+VEGA_FORCEINLINE void fastRGBtoHSL(float r, float g, float b,
+                                    float& h, float& s, float& l)
 {
-    float maxC = std::max({r, g, b});
-    float minC = std::min({r, g, b});
-    float delta = maxC - minC;
+    float mx = (r > g) ? ((r > b) ? r : b) : ((g > b) ? g : b);
+    float mn = (r < g) ? ((r < b) ? r : b) : ((g < b) ? g : b);
+    float d = mx - mn;
 
-    l = (maxC + minC) * 0.5f;
+    l = (mx + mn) * 0.5f;
 
-    if (delta < 1e-6f) {
+    if (d < 1e-6f) {
         h = 0.0f;
         s = 0.0f;
         return;
     }
 
-    s = (l <= 0.5f) ? (delta / (maxC + minC))
-                     : (delta / (2.0f - maxC - minC));
+    s = (l <= 0.5f) ? (d / (mx + mn + 1e-10f))
+                     : (d / (2.0f - mx - mn + 1e-10f));
 
-    if (maxC == r) {
-        h = 60.0f * std::fmod((g - b) / delta + 6.0f, 6.0f);
-    } else if (maxC == g) {
-        h = 60.0f * ((b - r) / delta + 2.0f);
+    if (mx == r) {
+        h = 60.0f * ((g - b) / d);
+        if (h < 0.0f) h += 360.0f;
+    } else if (mx == g) {
+        h = 60.0f * ((b - r) / d) + 120.0f;
     } else {
-        h = 60.0f * ((r - g) / delta + 4.0f);
+        h = 60.0f * ((r - g) / d) + 240.0f;
     }
-
-    if (h < 0.0f) h += 360.0f;
-    if (h >= 360.0f) h -= 360.0f;
 }
 
-static float hueToChannel(float p, float q, float t)
-{
-    if (t < 0.0f) t += 1.0f;
-    if (t > 1.0f) t -= 1.0f;
-    if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
-    if (t < 1.0f / 2.0f) return q;
-    if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
-    return p;
-}
-
-void HSLNode::hslToRGB(float h, float s, float l, float& r, float& g, float& b)
+// Fast HSL to RGB
+VEGA_FORCEINLINE void fastHSLtoRGB(float h, float s, float l,
+                                    float& r, float& g, float& b)
 {
     if (s < 1e-6f) {
         r = g = b = l;
         return;
     }
 
-    // Normalize hue to [0,1]
-    float hNorm = h / 360.0f;
-    hNorm = hNorm - std::floor(hNorm); // wrap
-
     float q = (l < 0.5f) ? (l * (1.0f + s)) : (l + s - l * s);
     float p = 2.0f * l - q;
+    float h_norm = h * (1.0f / 360.0f);
 
-    r = hueToChannel(p, q, hNorm + 1.0f / 3.0f);
-    g = hueToChannel(p, q, hNorm);
-    b = hueToChannel(p, q, hNorm - 1.0f / 3.0f);
+    auto hue2rgb = [](float p, float q, float t) -> float {
+        if (t < 0.0f) t += 1.0f;
+        if (t > 1.0f) t -= 1.0f;
+        if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
+        if (t < 0.5f) return q;
+        if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+        return p;
+    };
+
+    r = hue2rgb(p, q, h_norm + 1.0f / 3.0f);
+    g = hue2rgb(p, q, h_norm);
+    b = hue2rgb(p, q, h_norm - 1.0f / 3.0f);
 }
 
-void HSLNode::computeChannelWeights(float hue_deg, std::array<float, 8>& weights)
+// Pre-computed cosine LUT for channel weights (avoids per-pixel std::cos)
+static constexpr int COS_LUT_SIZE = 1024;
+static float s_cos_lut[COS_LUT_SIZE + 1];
+static bool s_cos_lut_ready = false;
+
+static void initCosLUT()
 {
-    // Channel center hues in degrees
-    static constexpr float centers[8] = {
-        0.0f,    // Red
-        30.0f,   // Orange
-        60.0f,   // Yellow
-        120.0f,  // Green
-        180.0f,  // Aqua
-        240.0f,  // Blue
-        270.0f,  // Purple
-        300.0f   // Magenta
-    };
-
-    // Half-widths: defines the angular distance at which blending reaches zero.
-    // Adjacent channels share a cosine blend in their overlap region.
-    static constexpr float halfWidths[8] = {
-        30.0f,  // Red (spans roughly 330-30)
-        30.0f,  // Orange (spans roughly 0-60)
-        30.0f,  // Yellow (spans roughly 30-90)
-        60.0f,  // Green (spans roughly 60-180)
-        60.0f,  // Aqua (spans roughly 120-240)
-        30.0f,  // Blue (spans roughly 210-270)
-        30.0f,  // Purple (spans roughly 240-300)
-        30.0f   // Magenta (spans roughly 270-330)
-    };
-
-    float totalWeight = 0.0f;
-    for (int i = 0; i < 8; ++i) {
-        // Angular distance, wrapping around 360
-        float diff = hue_deg - centers[i];
-        // Wrap to [-180, 180]
-        if (diff > 180.0f) diff -= 360.0f;
-        if (diff < -180.0f) diff += 360.0f;
-        diff = std::abs(diff);
-
-        float hw = halfWidths[i];
-        if (diff >= hw) {
-            weights[i] = 0.0f;
-        } else {
-            // Cosine blend: 1 at center, 0 at half-width
-            weights[i] = 0.5f * (1.0f + std::cos(kPi * diff / hw));
-        }
-        totalWeight += weights[i];
+    if (s_cos_lut_ready) return;
+    for (int i = 0; i <= COS_LUT_SIZE; ++i) {
+        float t = static_cast<float>(i) / COS_LUT_SIZE; // 0 to 1 -> 0 to PI
+        s_cos_lut[i] = std::cos(t * 3.14159265f);
     }
+    s_cos_lut_ready = true;
+}
 
-    // Normalize weights so they sum to 1 (in case of overlap)
-    if (totalWeight > 1e-6f) {
-        float inv = 1.0f / totalWeight;
-        for (int i = 0; i < 8; ++i)
-            weights[i] *= inv;
-    }
+// Fast cosine via LUT, input in [0, PI]
+VEGA_FORCEINLINE float fastCos01(float t)
+{
+    // t is ratio diff/halfWidth, already in [0, 1]
+    int idx = static_cast<int>(t * COS_LUT_SIZE + 0.5f);
+    if (idx < 0) idx = 0;
+    if (idx > COS_LUT_SIZE) idx = COS_LUT_SIZE;
+    return s_cos_lut[idx];
 }
 
 void HSLNode::process(Tile& tile, const EditRecipe& recipe)
 {
-    // Check if any HSL adjustments are non-zero
+    // Check if any adjustments are non-zero
     bool hasHSL = false;
     for (int i = 0; i < 8; ++i) {
-        if (std::abs(recipe.hsl_hue[i]) > 0.01f ||
-            std::abs(recipe.hsl_saturation[i]) > 0.01f ||
-            std::abs(recipe.hsl_luminance[i]) > 0.01f) {
+        if (recipe.hsl_hue[i] != 0.0f || recipe.hsl_saturation[i] != 0.0f ||
+            recipe.hsl_luminance[i] != 0.0f) {
             hasHSL = true;
             break;
         }
@@ -141,8 +109,19 @@ void HSLNode::process(Tile& tile, const EditRecipe& recipe)
         return;
     }
 
-    VEGA_LOG_DEBUG("HSLNode: applying HSL={} vibrance={} saturation={}",
-                   hasHSL, recipe.vibrance, recipe.saturation);
+    initCosLUT();
+
+    // Pre-compute channel centers and half-widths
+    static constexpr float centers[8] = {0, 30, 60, 120, 180, 240, 270, 300};
+    static constexpr float halfWidths[8] = {30, 20, 30, 40, 40, 30, 25, 30};
+
+    // Pre-compute inverse half-widths for fast division
+    float invHW[8];
+    for (int i = 0; i < 8; ++i)
+        invHW[i] = 1.0f / halfWidths[i];
+
+    const float vib_scale = recipe.vibrance / 100.0f;
+    const float sat_mul = 1.0f + recipe.saturation / 100.0f;
 
     const uint32_t rows = tile.height;
     const uint32_t cols = tile.width;
@@ -150,69 +129,70 @@ void HSLNode::process(Tile& tile, const EditRecipe& recipe)
     const uint32_t ch = tile.channels;
 
     for (uint32_t row = 0; row < rows; ++row) {
-        float* rowPtr = tile.data + row * stride;
+        float* __restrict rowPtr = tile.data + row * stride;
         for (uint32_t col = 0; col < cols; ++col) {
-            float* px = rowPtr + col * ch;
+            float* __restrict px = rowPtr + col * ch;
 
-            float r = std::clamp(px[0], 0.0f, 1.0f);
-            float g = std::clamp(px[1], 0.0f, 1.0f);
-            float b = std::clamp(px[2], 0.0f, 1.0f);
-
+            float r = px[0], g = px[1], b = px[2];
             float h, s, l;
-            rgbToHSL(r, g, b, h, s, l);
+            fastRGBtoHSL(vega_clamp01(r), vega_clamp01(g), vega_clamp01(b), h, s, l);
 
-            // Per-channel HSL adjustments
+            // Per-channel HSL
             if (hasHSL) {
-                std::array<float, 8> weights;
-                computeChannelWeights(h, weights);
-
-                float hueShift = 0.0f;
-                float satShift = 0.0f;
-                float lumShift = 0.0f;
+                float hueShift = 0, satShift = 0, lumShift = 0;
+                float totalW = 0;
 
                 for (int i = 0; i < 8; ++i) {
-                    if (weights[i] > 1e-6f) {
-                        hueShift += weights[i] * recipe.hsl_hue[i];
-                        satShift += weights[i] * recipe.hsl_saturation[i];
-                        lumShift += weights[i] * recipe.hsl_luminance[i];
-                    }
+                    float diff = h - centers[i];
+                    if (diff > 180.0f) diff -= 360.0f;
+                    else if (diff < -180.0f) diff += 360.0f;
+                    float absDiff = (diff < 0) ? -diff : diff;
+
+                    if (absDiff >= halfWidths[i]) continue;
+
+                    float w = 0.5f * (1.0f + fastCos01(absDiff * invHW[i]));
+                    totalW += w;
+                    hueShift += w * recipe.hsl_hue[i];
+                    satShift += w * recipe.hsl_saturation[i];
+                    lumShift += w * recipe.hsl_luminance[i];
                 }
 
-                // Hue shift (in degrees, scale from slider units to degrees)
+                if (totalW > 1e-6f) {
+                    float inv = 1.0f / totalW;
+                    hueShift *= inv;
+                    satShift *= inv;
+                    lumShift *= inv;
+                }
+
                 h += hueShift;
                 if (h < 0.0f) h += 360.0f;
-                if (h >= 360.0f) h -= 360.0f;
+                else if (h >= 360.0f) h -= 360.0f;
 
-                // Saturation shift: slider [-100,100] maps to multiplier
-                float satMul = 1.0f + satShift / 100.0f;
-                s = std::clamp(s * satMul, 0.0f, 1.0f);
+                s *= (1.0f + satShift * 0.01f);
+                if (s < 0.0f) s = 0.0f; else if (s > 1.0f) s = 1.0f;
 
-                // Luminance shift: slider [-100,100]
-                l = std::clamp(l + lumShift / 200.0f, 0.0f, 1.0f);
+                l += lumShift * 0.005f;
+                if (l < 0.0f) l = 0.0f; else if (l > 1.0f) l = 1.0f;
             }
 
-            // Global vibrance: boosts desaturated colors more, protects already saturated
+            // Vibrance
             if (hasVibrance) {
-                float vibranceScale = recipe.vibrance / 100.0f;
-                // Protection factor: less boost for already-saturated colors
-                float protection = 1.0f - s; // [0,1]: 0=fully saturated, 1=desaturated
-                protection = protection * protection; // quadratic: stronger protection
-                float vibMul = 1.0f + vibranceScale * protection;
-                s = std::clamp(s * vibMul, 0.0f, 1.0f);
+                float prot = 1.0f - s;
+                prot *= prot;
+                s *= (1.0f + vib_scale * prot);
+                if (s > 1.0f) s = 1.0f;
             }
 
             // Global saturation
             if (hasSaturation) {
-                float satMul = 1.0f + recipe.saturation / 100.0f;
-                s = std::clamp(s * satMul, 0.0f, 1.0f);
+                s *= sat_mul;
+                if (s < 0.0f) s = 0.0f; else if (s > 1.0f) s = 1.0f;
             }
 
-            // Convert back to RGB
-            hslToRGB(h, s, l, r, g, b);
-
-            px[0] = std::clamp(r, 0.0f, 1.0f);
-            px[1] = std::clamp(g, 0.0f, 1.0f);
-            px[2] = std::clamp(b, 0.0f, 1.0f);
+            fastHSLtoRGB(h, s, l, r, g, b);
+            px[0] = r;
+            px[1] = g;
+            px[2] = b;
         }
     }
 }
