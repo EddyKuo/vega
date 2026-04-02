@@ -292,10 +292,15 @@ static void buildDefaultLayout(ImGuiID dockspace_id)
     ImGuiID dock_right_top = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Up, 0.70f, nullptr, &dock_right_bottom);
 
     // Dock windows
-    // Use fixed IDs (the part after ###) so dock layout survives language changes
-    ImGui::DockBuilderDockWindow("###viewport", dock_left);
-    ImGui::DockBuilderDockWindow("###develop", dock_right_top);
-    ImGui::DockBuilderDockWindow("###histogram", dock_right_bottom);
+    // Must match the exact strings passed to ImGui::Begin()
+    // Format: "DisplayTitle###fixed_id"
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s###viewport", vega::tr(vega::S::PANEL_VIEWPORT));
+    ImGui::DockBuilderDockWindow(buf, dock_left);
+    snprintf(buf, sizeof(buf), "%s###develop", vega::tr(vega::S::PANEL_DEVELOP));
+    ImGui::DockBuilderDockWindow(buf, dock_right_top);
+    snprintf(buf, sizeof(buf), "%s###histogram", vega::tr(vega::S::PANEL_HISTOGRAM));
+    ImGui::DockBuilderDockWindow(buf, dock_right_bottom);
 
     ImGui::DockBuilderFinish(dockspace_id);
 }
