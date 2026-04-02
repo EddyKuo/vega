@@ -573,6 +573,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     g_image_srv.Reset(); g_image_tex.Reset();
     g_before_srv.Reset(); g_before_tex.Reset();
     ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
     VEGA_LOG_DEBUG("ImGui shutdown");
     ImGui::DestroyContext();
     g_ctx.cleanup();
