@@ -790,8 +790,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
         // ── Export Dialog ──
         if (g_export_dialog.isOpen() && g_has_image)
-            if (g_rgba_ptr)
-                g_export_dialog.render(*g_rgba_ptr, g_raw_image.width, g_raw_image.height);
+            if (g_rgba_ptr) {
+                // Export needs full-res data. If we only have preview, run full CPU pipeline.
+                if (g_rgba_ptr->size() != static_cast<size_t>(g_raw_image.width) * g_raw_image.height * 4) {
+                    // Force a full-res CPU process for export
+                    static std::vector<uint8_t> s_export_buf;
+                    const auto& full = g_pipeline.process(g_raw_image, g_recipe);
+                    s_export_buf.assign(full.begin(), full.end());
+                    g_export_dialog.render(s_export_buf, g_raw_image.width, g_raw_image.height);
+                } else {
+                    g_export_dialog.render(*g_rgba_ptr, g_raw_image.width, g_raw_image.height);
+                }
+            }
 
         // ── Status Bar ──
         {
