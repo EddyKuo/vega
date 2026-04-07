@@ -2,10 +2,40 @@
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 
-:: Usage: build.bat [debug|release] [upx]
+:: Usage: build.bat [debug|release|clean|package] [upx]
 ::   build.bat              -> debug build
 ::   build.bat release      -> release build (no compression)
 ::   build.bat release upx  -> release build + UPX compression
+::   build.bat clean        -> delete all build output
+::   build.bat package      -> create dist/ folder with runtime files only
+
+if "%1"=="clean" (
+    echo Cleaning build output...
+    rd /s /q out\build\windows-x64-debug 2>nul
+    rd /s /q out\build\windows-x64-release 2>nul
+    rd /s /q dist 2>nul
+    echo Clean done.
+    exit /b 0
+)
+
+if "%1"=="package" (
+    echo Packaging release build...
+    if not exist out\build\windows-x64-release\src\vega.exe (
+        echo ERROR: Release build not found. Run 'build.bat release' first.
+        exit /b 1
+    )
+    rd /s /q dist 2>nul
+    mkdir dist\vega
+    copy out\build\windows-x64-release\src\vega.exe dist\vega\
+    copy out\build\windows-x64-release\src\*.dll dist\vega\
+    xcopy /s /i shaders dist\vega\shaders
+    copy LICENSE dist\vega\
+    copy README.md dist\vega\
+    echo.
+    echo Package created in dist\vega\
+    dir dist\vega\ /s | findstr "File(s)"
+    exit /b 0
+)
 
 echo [1/4] Setting up MSVC environment...
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
