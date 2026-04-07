@@ -46,6 +46,14 @@ bool GPUPipeline::initialize(D3D11Context& ctx)
         VEGA_LOG_ERROR("GPUPipeline: failed to create Dimensions constant buffer");
         return false;
     }
+    if (!denoise_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create Denoise constant buffer");
+        return false;
+    }
+    if (!sharpen_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create Sharpen constant buffer");
+        return false;
+    }
 
     // Create linear sampler for LUT sampling
     {
@@ -421,7 +429,7 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // Pass 3: HSL + Vibrance + Saturation + sRGB gamma output
+    // Pass 3: HSL + Vibrance + Saturation
     //   Input:  tex_b (t0)
     //   Output: tex_a (u0) -- ping-pong back
     // ──────────────────────────────────────────────────────────────────────
@@ -452,19 +460,139 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
         ID3D11UnorderedAccessView* null_uav[] = { nullptr };
         dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
     } else {
-        // No HSL shader -- copy tex_b to tex_a
+        // No HSL shader -- copy tex_b to tex_a so chain continues
         dc->CopyResource(tex_a.texture.Get(), tex_b.texture.Get());
     }
 
-    // ── Result is in tex_a ──
-    // Release tex_b back to pool, keep tex_a as the output
-    pool_->release(tex_b);
+    // After pass 3 the latest result is in tex_a (result_in_a == true).
+    // Passes 4 and 5 ping-pong without copies when skipped.
+    bool result_in_a = true;
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Pass 4: Denoise
+    //   Input:  tex_a (t0)   Output: tex_b (u0)
+    //   Skip if both luminance and color noise reduction are negligible.
+    // ──────────────────────────────────────────────────────────────────────
+    {
+        const bool run_denoise = denoise_shader_.isValid() &&
+                                 (recipe.denoise_luminance >= 0.5f ||
+                                  recipe.denoise_color     >= 0.5f);
+
+        if (run_denoise) {
+            DenoiseCB cb{};
+            cb.luma_strength   = recipe.denoise_luminance / 100.0f;
+            cb.chroma_strength = recipe.denoise_color     / 100.0f;
+            cb.detail_keep     = recipe.denoise_detail    / 100.0f;
+            cb.luma_radius     = 1 + static_cast<int>(cb.luma_strength   * 2.0f);
+            cb.chroma_radius   = 1 + static_cast<int>(cb.chroma_strength * 2.0f);
+            cb.pad0 = cb.pad1 = cb.pad2 = 0.0f;
+            denoise_cb_.update(dc, cb);
+            denoise_cb_.bindCS(dc, 0);
+
+            // Input from tex_a, output to tex_b
+            ID3D11ShaderResourceView* srvs[] = { tex_a.srv.Get() };
+            dc->CSSetShaderResources(0, 1, srvs);
+
+            ID3D11UnorderedAccessView* uavs[] = { tex_b.uav.Get() };
+            dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+            denoise_shader_.bind(dc);
+            denoise_shader_.dispatch(dc, groups_x, groups_y, 1);
+
+            // Unbind before next pass
+            ID3D11ShaderResourceView* null_srv[] = { nullptr };
+            dc->CSSetShaderResources(0, 1, null_srv);
+            ID3D11UnorderedAccessView* null_uav[] = { nullptr };
+            dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
+
+            result_in_a = false; // result now in tex_b
+        } else {
+            // Skip: no dispatch, no copy — result_in_a stays true (tex_a holds the data)
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Pass 5: Sharpen (USM)
+    //   Input:  current result texture   Output: the other texture
+    //   Skip if sharpen_amount < 0.5.
+    // ──────────────────────────────────────────────────────────────────────
+    {
+        const bool run_sharpen = sharpen_shader_.isValid() &&
+                                 (recipe.sharpen_amount >= 0.5f);
+
+        if (run_sharpen) {
+            SharpenCB cb{};
+            cb.amount  = recipe.sharpen_amount / 50.0f;
+            cb.radius  = std::max(1, static_cast<int>(recipe.sharpen_radius + 0.5f));
+            cb.masking = recipe.sharpen_masking / 100.0f;
+            cb.pad0    = 0.0f;
+            sharpen_cb_.update(dc, cb);
+            sharpen_cb_.bindCS(dc, 0);
+
+            // Bind whichever texture holds the current result as input
+            ID3D11ShaderResourceView* in_srv  = result_in_a ? tex_a.srv.Get() : tex_b.srv.Get();
+            ID3D11UnorderedAccessView* out_uav = result_in_a ? tex_b.uav.Get() : tex_a.uav.Get();
+
+            ID3D11ShaderResourceView* srvs[] = { in_srv };
+            dc->CSSetShaderResources(0, 1, srvs);
+
+            ID3D11UnorderedAccessView* uavs[] = { out_uav };
+            dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+            sharpen_shader_.bind(dc);
+            sharpen_shader_.dispatch(dc, groups_x, groups_y, 1);
+
+            // Unbind before next pass
+            ID3D11ShaderResourceView* null_srv[] = { nullptr };
+            dc->CSSetShaderResources(0, 1, null_srv);
+            ID3D11UnorderedAccessView* null_uav[] = { nullptr };
+            dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
+
+            result_in_a = !result_in_a; // flip: output went to the other texture
+        }
+        // Skip: no flip, no copy — current result pointer stays as-is
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Pass 6: sRGB Gamma output (mandatory)
+    //   Input:  current result texture   Output: the other texture
+    //   Uses only the dimensions CB at b2 (already bound).
+    // ──────────────────────────────────────────────────────────────────────
+    if (gamma_shader_.isValid()) {
+        ID3D11ShaderResourceView* in_srv  = result_in_a ? tex_a.srv.Get() : tex_b.srv.Get();
+        ID3D11UnorderedAccessView* out_uav = result_in_a ? tex_b.uav.Get() : tex_a.uav.Get();
+
+        ID3D11ShaderResourceView* srvs[] = { in_srv };
+        dc->CSSetShaderResources(0, 1, srvs);
+
+        ID3D11UnorderedAccessView* uavs[] = { out_uav };
+        dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+        gamma_shader_.bind(dc);
+        gamma_shader_.dispatch(dc, groups_x, groups_y, 1);
+
+        // Unbind
+        ID3D11ShaderResourceView* null_srv[] = { nullptr };
+        dc->CSSetShaderResources(0, 1, null_srv);
+        ID3D11UnorderedAccessView* null_uav[] = { nullptr };
+        dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
+
+        result_in_a = !result_in_a; // output went to the other texture
+    }
+    // If gamma shader is missing, the linear result is still usable for display.
+
+    // ── Determine which texture holds the final result ──
+    // Release the unused texture back to the pool and retain the output one.
+    TexturePool::TextureHandle final_tex  = result_in_a ? std::move(tex_a) : std::move(tex_b);
+    TexturePool::TextureHandle unused_tex = result_in_a ? std::move(tex_b) : std::move(tex_a);
+
+    pool_->release(unused_tex);
 
     // Release previous output if we had one
     if (output_.isValid())
         pool_->release(output_);
 
-    output_ = tex_a;
+    output_ = std::move(final_tex);
 
     VEGA_LOG_DEBUG("GPUPipeline: process ({}x{}, scale={:.3f}): {:.1f}ms",
                    dst_w, dst_h, preview_scale, timer.elapsed_ms());
@@ -535,6 +663,9 @@ void GPUPipeline::loadShaders()
     tryLoad(wb_exposure_shader_, "white_balance_exposure.hlsl");
     tryLoad(tone_curve_shader_,  "tone_curve.hlsl");
     tryLoad(hsl_shader_,         "hsl_adjust.hlsl");
+    tryLoad(denoise_shader_,     "denoise.hlsl");
+    tryLoad(sharpen_shader_,     "sharpen_usm.hlsl");
+    tryLoad(gamma_shader_,       "gamma_output.hlsl");
     tryLoad(histogram_shader_,   "histogram_compute.hlsl");
 }
 

@@ -38,6 +38,9 @@ private:
     ComputeShader wb_exposure_shader_;
     ComputeShader tone_curve_shader_;
     ComputeShader hsl_shader_;
+    ComputeShader denoise_shader_;
+    ComputeShader sharpen_shader_;
+    ComputeShader gamma_shader_;
     // Note: histogram_shader_ is defined but not dispatched in the display path;
     // it would be used separately for histogram computation.
     ComputeShader histogram_shader_;
@@ -75,6 +78,27 @@ private:
         uint32_t dst_width, dst_height;
     };
     ConstantBuffer<DimensionsCB> dim_cb_;
+
+    // CB slot 0 (denoise pass): luminance/chroma denoise parameters
+    struct DenoiseCB {
+        float luma_strength;    // recipe.denoise_luminance / 100
+        float chroma_strength;  // recipe.denoise_color / 100
+        float detail_keep;      // recipe.denoise_detail / 100
+        int   luma_radius;      // 1 + int(luma_strength * 2)
+
+        int   chroma_radius;    // 1 + int(chroma_strength * 2)
+        float pad0, pad1, pad2;
+    };
+    ConstantBuffer<DenoiseCB> denoise_cb_;
+
+    // CB slot 0 (sharpen pass): unsharp-mask sharpening parameters
+    struct SharpenCB {
+        float amount;    // recipe.sharpen_amount / 50
+        int   radius;    // max(1, int(recipe.sharpen_radius + 0.5f))
+        float masking;   // recipe.sharpen_masking / 100
+        float pad0;
+    };
+    ConstantBuffer<SharpenCB> sharpen_cb_;
 
     // ── Curve LUT textures (1D, 4096 entries each) ──
     static constexpr uint32_t CURVE_LUT_SIZE = 4096;
