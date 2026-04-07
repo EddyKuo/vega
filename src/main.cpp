@@ -63,6 +63,9 @@ static std::filesystem::path g_current_path;
 static bool g_show_before_after = false;
 static bool g_first_frame = true;
 static double g_last_pipeline_ms = 0.0;
+static bool g_needs_full_res = false;
+static bool g_is_preview = false;
+static uint32_t g_display_w = 0, g_display_h = 0;  // actual texture dimensions
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
     HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -116,15 +119,47 @@ static void uploadToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h
         g_ctx.device()->CreateShaderResourceView(tex.Get(), nullptr, &srv);
 }
 
-static void reprocessPipeline()
+// Full resolution processing
+static void reprocessFull()
 {
     if (!g_has_image) return;
     vega::Timer timer;
     const auto& rgba = g_pipeline.process(g_raw_image, g_recipe);
     g_rgba_ptr = &rgba;
     g_last_pipeline_ms = timer.elapsed_ms();
-    uploadToGPU(rgba, g_raw_image.width, g_raw_image.height, g_image_tex, g_image_srv);
-    g_histogram.compute(rgba.data(), g_raw_image.width, g_raw_image.height);
+    g_display_w = g_raw_image.width;
+    g_display_h = g_raw_image.height;
+    g_is_preview = false;
+    g_needs_full_res = false;
+    uploadToGPU(rgba, g_display_w, g_display_h, g_image_tex, g_image_srv);
+    g_histogram.compute(rgba.data(), g_display_w, g_display_h);
+}
+
+// Preview resolution (1/4) for interactive slider dragging
+static void reprocessPreview()
+{
+    if (!g_has_image) return;
+    vega::Timer timer;
+    uint32_t pw, ph;
+    const auto& rgba = g_pipeline.processPreview(g_raw_image, g_recipe, 4, pw, ph);
+    g_rgba_ptr = &rgba;
+    g_last_pipeline_ms = timer.elapsed_ms();
+    g_display_w = pw;
+    g_display_h = ph;
+    g_is_preview = true;
+    g_needs_full_res = true;
+    uploadToGPU(rgba, pw, ph, g_image_tex, g_image_srv);
+    g_histogram.compute(rgba.data(), pw, ph);
+}
+
+// Called by DevelopPanel when slider changes — use preview during drag
+static void reprocessPipeline()
+{
+    if (!g_has_image) return;
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        reprocessPreview();   // dragging — fast preview
+    else
+        reprocessFull();      // not dragging — full res
 }
 
 static void generateBeforeImage()
@@ -538,6 +573,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
+
+        // Deferred full-res: when mouse released after preview drag
+        if (g_needs_full_res && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            reprocessFull();
+        }
 
         // Menu bar
         renderMenuBar();

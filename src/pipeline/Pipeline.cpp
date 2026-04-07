@@ -1,3 +1,4 @@
+#define NOMINMAX
 #include "pipeline/Pipeline.h"
 #include "pipeline/cpu/WhiteBalanceNode.h"
 #include "pipeline/cpu/ExposureNode.h"
@@ -366,9 +367,11 @@ const std::vector<uint8_t>& Pipeline::process(const RawImage& raw, const EditRec
     }
 
     // Copy demosaic result into work buffer (nodes modify in-place)
+    Timer memcpyTimer;
     const size_t float_count = demosaic_cache_.size();
     work_buffer_.resize(float_count);
     std::memcpy(work_buffer_.data(), demosaic_cache_.data(), float_count * sizeof(float));
+    double memcpy_ms = memcpyTimer.elapsed_ms();
 
     // Step 2: Run all processing nodes
     Tile tile{};
@@ -382,14 +385,102 @@ const std::vector<uint8_t>& Pipeline::process(const RawImage& raw, const EditRec
     tile.channels = 3;
 
     for (size_t i = 0; i < nodes_.size(); ++i) {
+        Timer nodeTimer;
         nodes_[i]->process(tile, recipe);
+        VEGA_LOG_INFO("Pipeline: [{}] {}: {:.1f}ms", i, nodes_[i]->name(), nodeTimer.elapsed_ms());
     }
 
     // Step 3: Gamma + quantize to RGBA8
+    Timer finalTimer;
     rgba_buffer_.resize(static_cast<size_t>(pixel_count) * 4);
     toRGBA8(work_buffer_.data(), rgba_buffer_.data(), pixel_count);
+    VEGA_LOG_INFO("Pipeline: toRGBA8: {:.1f}ms | memcpy: {:.1f}ms | total: {:.1f}ms",
+        finalTimer.elapsed_ms(), memcpy_ms, totalTimer.elapsed_ms());
+    return rgba_buffer_;
+}
 
-    VEGA_LOG_INFO("Pipeline: total: {:.1f}ms", totalTimer.elapsed_ms());
+void Pipeline::downscaleRGB(const float* src, uint32_t sw, uint32_t sh,
+                             float* dst, uint32_t dw, uint32_t dh, int factor)
+{
+    // Box downscale: average factor x factor block
+    const float inv = 1.0f / static_cast<float>(factor * factor);
+    for (uint32_t dy = 0; dy < dh; ++dy) {
+        for (uint32_t dx = 0; dx < dw; ++dx) {
+            float r = 0, g = 0, b = 0;
+            for (int ky = 0; ky < factor; ++ky) {
+                uint32_t sy = std::min(dy * factor + ky, sh - 1);
+                for (int kx = 0; kx < factor; ++kx) {
+                    uint32_t sx = std::min(dx * factor + kx, sw - 1);
+                    const float* sp = src + (sy * sw + sx) * 3;
+                    r += sp[0]; g += sp[1]; b += sp[2];
+                }
+            }
+            float* dp = dst + (dy * dw + dx) * 3;
+            dp[0] = r * inv;
+            dp[1] = g * inv;
+            dp[2] = b * inv;
+        }
+    }
+}
+
+const std::vector<uint8_t>& Pipeline::processPreview(
+    const RawImage& raw, const EditRecipe& recipe,
+    int scale_denom, uint32_t& out_w, uint32_t& out_h)
+{
+    if (raw.bayer_data.empty() || raw.width == 0 || raw.height == 0 || scale_denom < 1) {
+        rgba_buffer_.clear();
+        out_w = out_h = 0;
+        return rgba_buffer_;
+    }
+
+    if (nodes_.empty())
+        buildNodeChain();
+
+    Timer totalTimer;
+    const uint32_t full_w = raw.width;
+    const uint32_t full_h = raw.height;
+
+    // Ensure demosaic cache exists
+    const void* src_ptr = raw.bayer_data.data();
+    if (src_ptr != demosaic_src_ || demosaic_w_ != full_w || demosaic_h_ != full_h) {
+        Timer dt;
+        demosaicAndTransform(raw, demosaic_cache_);
+        demosaic_src_ = src_ptr;
+        demosaic_w_ = full_w;
+        demosaic_h_ = full_h;
+        VEGA_LOG_INFO("Pipeline: demosaic: {:.1f}ms", dt.elapsed_ms());
+    }
+
+    // Downscale for preview
+    uint32_t pw = full_w / scale_denom;
+    uint32_t ph = full_h / scale_denom;
+    if (pw < 1) pw = 1;
+    if (ph < 1) ph = 1;
+    uint32_t ppix = pw * ph;
+
+    preview_buffer_.resize(static_cast<size_t>(ppix) * 3);
+    downscaleRGB(demosaic_cache_.data(), full_w, full_h,
+                  preview_buffer_.data(), pw, ph, scale_denom);
+
+    // Run nodes on downscaled buffer
+    Tile tile{};
+    tile.data = preview_buffer_.data();
+    tile.width = pw;
+    tile.height = ph;
+    tile.stride = pw * 3;
+    tile.channels = 3;
+
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        nodes_[i]->process(tile, recipe);
+
+    // toRGBA8
+    rgba_buffer_.resize(static_cast<size_t>(ppix) * 4);
+    toRGBA8(preview_buffer_.data(), rgba_buffer_.data(), ppix);
+
+    out_w = pw;
+    out_h = ph;
+    VEGA_LOG_INFO("Pipeline: preview {}x{} (1/{}): {:.1f}ms",
+        pw, ph, scale_denom, totalTimer.elapsed_ms());
     return rgba_buffer_;
 }
 
