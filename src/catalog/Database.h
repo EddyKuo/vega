@@ -62,11 +62,13 @@ public:
         std::string lens_model;
         std::string date_from, date_to;
         std::string search_text;  // FTS5
+        std::string folder_path;  // filter by folder prefix
     };
     std::vector<PhotoRecord> filter(const FilterCriteria& criteria);
 
     // Stats
     int64_t photoCount();
+    int64_t countByFolder(const std::string& folder_path);
 
 private:
     sqlite3* db_ = nullptr;

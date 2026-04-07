@@ -60,6 +60,10 @@ AppSettings AppSettings::load()
         if (j.contains("last_open_dir"))   settings.last_open_dir   = j["last_open_dir"].get<std::string>();
         if (j.contains("last_export_dir")) settings.last_export_dir = j["last_export_dir"].get<std::string>();
         if (j.contains("catalog_path"))    settings.catalog_path    = j["catalog_path"].get<std::string>();
+        if (j.contains("library_folders")) {
+            for (const auto& f : j["library_folders"])
+                settings.library_folders.push_back(f.get<std::string>());
+        }
 
         VEGA_LOG_INFO("Settings loaded from {}", path.string());
     }
@@ -122,6 +126,9 @@ void AppSettings::save() const
     j["last_open_dir"]   = last_open_dir;
     j["last_export_dir"] = last_export_dir;
     j["catalog_path"]    = catalog_path;
+    j["library_folders"] = nlohmann::json::array();
+    for (const auto& f : library_folders)
+        j["library_folders"].push_back(f);
 
     std::ofstream ofs(path);
     if (!ofs.is_open())

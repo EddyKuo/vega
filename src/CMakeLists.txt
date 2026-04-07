@@ -91,6 +91,7 @@ add_library(vega_ui STATIC
     ui/BeforeAfter.cpp
     ui/ExportDialog.cpp
     ui/GridView.cpp
+    ui/FolderPanel.cpp
     ui/Toolbar.cpp
     ui/StatusBar.cpp
 )

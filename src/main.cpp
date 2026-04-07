@@ -29,12 +29,23 @@
 #include "ui/ExportDialog.h"
 #include "ui/Toolbar.h"
 #include "ui/StatusBar.h"
+#include "ui/GridView.h"
+#include "ui/FolderPanel.h"
+#include "catalog/Database.h"
+#include "catalog/ThumbnailCache.h"
+#include "catalog/ImportManager.h"
 #include "core/i18n.h"
 #include "pipeline/GPUPipeline.h"
 
+#include <shlobj.h>
+
 using Microsoft::WRL::ComPtr;
 
+// ── App Mode ──
+enum class AppMode { Library, Develop };
+
 // ── Globals ──
+static AppMode g_app_mode = AppMode::Library;
 static vega::D3D11Context g_ctx;
 static vega::ImageViewport g_viewport;
 static vega::DevelopPanel g_develop_panel;
@@ -49,6 +60,17 @@ static vega::ExportDialog g_export_dialog;
 static vega::Toolbar g_toolbar;
 static vega::StatusBar g_status_bar;
 static vega::AppSettings g_settings;
+
+// Library mode
+static vega::GridView g_grid_view;
+static vega::FolderPanel g_folder_panel;
+static vega::Database g_database;
+static vega::ThumbnailCache g_thumb_cache;
+
+// Import state
+static std::atomic<bool> g_import_running{false};
+static vega::ImportManager::ImportProgress g_import_progress;
+static std::mutex g_import_mutex;
 
 // Window
 static HWND g_hwnd = nullptr;
@@ -340,6 +362,158 @@ static void openRawFile()
     std::wstring title = L"Vega - " +
         std::wstring(g_current_path.filename().wstring());
     SetWindowTextW(g_hwnd, title.c_str());
+
+    // Switch to Develop mode when opening a file
+    g_app_mode = AppMode::Develop;
+}
+
+// Load a RAW file by path and switch to Develop mode
+static void loadRawAndDevelop(const std::filesystem::path& path)
+{
+    g_current_path = path;
+    VEGA_LOG_INFO("Loading for develop: {}", path.string());
+    vega::Timer timer;
+
+    auto result = vega::RawDecoder::decode(path);
+    if (!result) {
+        g_status_bar.filename = "Error: Failed to decode RAW file";
+        return;
+    }
+
+    g_raw_image = std::move(result.value());
+    double decode_ms = timer.elapsed_ms();
+    VEGA_LOG_INFO("Decoded {}x{} in {:.1f}ms", g_raw_image.width, g_raw_image.height, decode_ms);
+
+    vega::ExifReader::enrichMetadata(path, g_raw_image.metadata);
+
+    auto saved = vega::loadRecipe(path);
+    g_recipe = saved ? *saved : vega::EditRecipe{};
+    g_history.clear();
+    g_has_image = true;
+
+    if (g_use_gpu)
+        g_gpu_pipeline.uploadRawData(g_raw_image);
+
+    reprocessPipeline();
+    generateBeforeImage();
+
+    ImVec2 vp_size = ImGui::GetMainViewport()->WorkSize;
+    g_viewport.fitToWindow(ImVec2(vp_size.x * 0.65f, vp_size.y * 0.8f),
+                           g_raw_image.width, g_raw_image.height);
+
+    auto& m = g_raw_image.metadata;
+    g_status_bar.filename = path.filename().string();
+    g_status_bar.camera_info = m.camera_make + " " + m.camera_model;
+    g_status_bar.resolution = std::to_string(g_raw_image.width) + "x" + std::to_string(g_raw_image.height);
+    g_status_bar.pipeline_ms = decode_ms;
+
+    std::wstring title = L"Vega - " + std::wstring(path.filename().wstring());
+    SetWindowTextW(g_hwnd, title.c_str());
+
+    g_app_mode = AppMode::Develop;
+}
+
+// Win32 folder picker using IFileDialog (Vista+)
+static std::filesystem::path pickFolder()
+{
+    std::filesystem::path result;
+    IFileDialog* pfd = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&pfd));
+    if (FAILED(hr)) return result;
+
+    DWORD options = 0;
+    pfd->GetOptions(&options);
+    pfd->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+    pfd->SetTitle(L"Select RAW Folder");
+
+    hr = pfd->Show(g_hwnd);
+    if (SUCCEEDED(hr)) {
+        IShellItem* psi = nullptr;
+        hr = pfd->GetResult(&psi);
+        if (SUCCEEDED(hr)) {
+            PWSTR path_str = nullptr;
+            hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &path_str);
+            if (SUCCEEDED(hr) && path_str) {
+                result = std::filesystem::path(path_str);
+                CoTaskMemFree(path_str);
+            }
+            psi->Release();
+        }
+    }
+    pfd->Release();
+    return result;
+}
+
+// Import a folder in background thread
+static void importFolderAsync(const std::filesystem::path& folder_path, int folder_index)
+{
+    if (g_import_running) return;
+
+    g_import_running = true;
+    g_folder_panel.setImporting(folder_index, true);
+
+    std::filesystem::path folder_copy = folder_path;
+    std::thread([folder_copy, folder_index]() {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+        // Scan
+        auto files = vega::ImportManager::scanDirectory(folder_copy);
+
+        // Import
+        vega::ImportManager mgr;
+        mgr.import(files, g_database, g_thumb_cache,
+            [&](const vega::ImportManager::ImportProgress& p) {
+                std::lock_guard<std::mutex> lock(g_import_mutex);
+                g_import_progress = p;
+            });
+
+        // Update folder count from DB (accurate count of imported photos)
+        int64_t db_count = g_database.countByFolder(folder_copy.string());
+        g_folder_panel.updateRawCount(folder_index, static_cast<int>(db_count));
+        g_folder_panel.setImporting(folder_index, false);
+        g_grid_view.refresh();
+        g_import_running = false;
+
+        VEGA_LOG_INFO("Import complete for folder: {}", folder_copy.string());
+        CoUninitialize();
+    }).detach();
+}
+
+// Add a folder: store in settings, add to panel, start import
+static void addLibraryFolder()
+{
+    auto folder = pickFolder();
+    if (folder.empty()) return;
+
+    // Add to settings
+    std::string folder_str = folder.string();
+    auto& folders = g_settings.library_folders;
+    if (std::find(folders.begin(), folders.end(), folder_str) == folders.end()) {
+        folders.push_back(folder_str);
+    }
+
+    // Add to panel
+    g_folder_panel.addFolder(folder);
+    int idx = static_cast<int>(g_folder_panel.folders().size()) - 1;
+
+    // Start background import
+    importFolderAsync(folder, idx);
+}
+
+// Remove a folder from the panel and settings
+static void removeLibraryFolder(int index)
+{
+    if (index < 0 || index >= static_cast<int>(g_folder_panel.folders().size())) return;
+
+    auto path_str = g_folder_panel.folders()[index].path.string();
+    g_folder_panel.removeFolder(index);
+
+    // Remove from settings
+    auto& folders = g_settings.library_folders;
+    folders.erase(std::remove(folders.begin(), folders.end(), path_str), folders.end());
+
+    g_grid_view.refresh();
 }
 
 // ── Vega dark theme ──
@@ -421,16 +595,20 @@ static void buildDefaultLayout(ImGuiID dockspace_id)
     ImGuiID dock_right;
     ImGuiID dock_left = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.75f, nullptr, &dock_right);
 
+    // Split left: folder panel 15% | main area 85%
+    ImGuiID dock_main;
+    ImGuiID dock_folders = ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Left, 0.18f, nullptr, &dock_main);
+
     // Split right: top 70% (develop) | bottom 30% (histogram)
     ImGuiID dock_right_bottom;
     ImGuiID dock_right_top = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Up, 0.70f, nullptr, &dock_right_bottom);
 
     // Dock windows
-    // Must match the exact strings passed to ImGui::Begin()
-    // Format: "DisplayTitle###fixed_id"
     char buf[128];
+    snprintf(buf, sizeof(buf), "%s###folders", vega::tr(vega::S::PANEL_FOLDERS));
+    ImGui::DockBuilderDockWindow(buf, dock_folders);
     snprintf(buf, sizeof(buf), "%s###viewport", vega::tr(vega::S::PANEL_VIEWPORT));
-    ImGui::DockBuilderDockWindow(buf, dock_left);
+    ImGui::DockBuilderDockWindow(buf, dock_main);
     snprintf(buf, sizeof(buf), "%s###develop", vega::tr(vega::S::PANEL_DEVELOP));
     ImGui::DockBuilderDockWindow(buf, dock_right_top);
     snprintf(buf, sizeof(buf), "%s###histogram", vega::tr(vega::S::PANEL_HISTOGRAM));
@@ -449,6 +627,8 @@ static void renderMenuBar()
         {
             if (ImGui::MenuItem(tr(S::MENU_OPEN), "Ctrl+O"))
                 openRawFile();
+            if (ImGui::MenuItem(tr(S::FOLDER_ADD), "Ctrl+Shift+I"))
+                addLibraryFolder();
             if (ImGui::MenuItem(tr(S::MENU_SAVE_RECIPE), "Ctrl+S", false, g_has_image))
                 saveRecipe(g_current_path, g_recipe);
             ImGui::Separator();
@@ -523,6 +703,8 @@ static void renderMenuBar()
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
     vega::installCrashHandler();
     vega::WindowsIntegration::enableHighDPI();
     vega::Logger::init();
@@ -625,9 +807,73 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     tb_cb.on_zoom_100 = []{ /* handled by viewport F/1/2 keys */ };
     tb_cb.on_zoom_200 = []{};
     tb_cb.on_toggle_before_after = []{ g_show_before_after = !g_show_before_after; };
-    tb_cb.on_mode_grid = []{};
-    tb_cb.on_mode_develop = []{};
+    tb_cb.on_mode_grid = []{ g_app_mode = AppMode::Library; };
+    tb_cb.on_mode_develop = []{ g_app_mode = AppMode::Develop; };
     g_toolbar.setCallbacks(tb_cb);
+
+    // ── Initialize catalog database ──
+    {
+        std::string cat_path = g_settings.catalog_path;
+        if (cat_path.empty()) {
+            // Default catalog location: %APPDATA%/Vega/catalog.db
+            wchar_t* appdata_raw = nullptr;
+            if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata_raw))) {
+                auto dir = std::filesystem::path(appdata_raw) / "Vega";
+                CoTaskMemFree(appdata_raw);
+                cat_path = (dir / "catalog.db").string();
+            } else {
+                cat_path = "catalog.db";
+            }
+            g_settings.catalog_path = cat_path;
+        }
+
+        if (g_database.open(cat_path)) {
+            VEGA_LOG_INFO("Catalog opened: {}", cat_path);
+        } else {
+            VEGA_LOG_ERROR("Failed to open catalog: {}", cat_path);
+        }
+
+        // Initialize thumbnail cache
+        auto thumb_dir = std::filesystem::path(cat_path).parent_path() / "thumbnails";
+        g_thumb_cache.initialize(thumb_dir, g_ctx.device());
+    }
+
+    // ── Wire FolderPanel callbacks ──
+    g_folder_panel.setOnAddFolder([]{ addLibraryFolder(); });
+    g_folder_panel.setOnRemoveFolder([](int idx){ removeLibraryFolder(idx); });
+    g_folder_panel.setOnFolderSelected([](const std::filesystem::path& path) {
+        vega::Database::FilterCriteria filter;
+        filter.folder_path = path.string();
+        g_grid_view.setFilter(filter);
+    });
+    g_folder_panel.setOnShowAll([]() {
+        g_grid_view.setFilter(vega::Database::FilterCriteria{});
+    });
+
+    // ── Wire GridView double-click ──
+    g_grid_view.setOnDoubleClick([](int64_t /*photo_id*/, const std::string& file_path) {
+        loadRawAndDevelop(std::filesystem::path(file_path));
+    });
+
+    // ── Restore saved library folders ──
+    for (const auto& folder_str : g_settings.library_folders) {
+        std::filesystem::path folder_path(folder_str);
+        if (std::filesystem::exists(folder_path)) {
+            g_folder_panel.addFolder(folder_path);
+            int idx = static_cast<int>(g_folder_panel.folders().size()) - 1;
+
+            // Count existing photos in DB for this folder
+            int64_t count = g_database.countByFolder(folder_str);
+            if (count > 0) {
+                g_folder_panel.updateRawCount(idx, static_cast<int>(count));
+            } else {
+                // No photos in DB yet — re-import in background
+                importFolderAsync(folder_path, idx);
+            }
+
+            VEGA_LOG_INFO("Restored folder: {} ({} photos)", folder_str, count);
+        }
+    }
 
     // WB Eyedropper callback: sample pixel from the demosaiced linear data
     g_viewport.setEyedropperCallback([](uint32_t x, uint32_t y) {
@@ -689,14 +935,17 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         // Menu bar
         renderMenuBar();
 
-        // Dockspace
+        // Toolbar (fixed at top, below menu bar)
+        g_toolbar.render(g_has_image, g_history.canUndo(), g_history.canRedo(),
+                         g_app_mode == AppMode::Develop);
+
+        // Dockspace (standard approach, toolbar overlaps but toolbar is always on top)
         ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
         // Set up default layout on first frame (if no saved layout)
         if (g_first_frame)
         {
             g_first_frame = false;
-            // Only build layout if no saved ini exists
             if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr ||
                 !std::filesystem::exists("vega_imgui.ini"))
             {
@@ -704,36 +953,69 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             }
         }
 
-        // Keyboard shortcuts
+        // Keyboard shortcuts (global)
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O))
             openRawFile();
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && g_has_image)
-        {
-            VEGA_LOG_INFO("Saving recipe: {}", g_current_path.string());
-            vega::saveRecipe(g_current_path, g_recipe);
-        }
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && g_history.canUndo())
-        { g_recipe = g_history.undo(); reprocessPipeline(); }
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y) && g_history.canRedo())
-        { g_recipe = g_history.redo(); reprocessPipeline(); }
-        if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E) && g_has_image)
-            g_export_dialog.open(g_current_path);
-        if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !io.KeyCtrl && !io.KeyAlt)
-            g_show_before_after = !g_show_before_after;
-        if (ImGui::IsKeyPressed(ImGuiKey_M, false) && g_show_before_after)
-            g_before_after.toggleMode();
-        if (g_show_before_after)
-            g_before_after.setShowBefore(ImGui::IsKeyDown(ImGuiKey_Backslash));
-        // W: WB eyedropper
-        if (ImGui::IsKeyPressed(ImGuiKey_W, false) && !io.KeyCtrl && g_has_image)
-            g_viewport.activateEyedropper();
+        if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_I))
+            addLibraryFolder();
+        // G key: switch to Library mode
+        if (ImGui::IsKeyPressed(ImGuiKey_G, false) && !io.KeyCtrl && !io.KeyAlt)
+            g_app_mode = AppMode::Library;
+        // D key: switch to Develop mode
+        if (ImGui::IsKeyPressed(ImGuiKey_D, false) && !io.KeyCtrl && !io.KeyAlt
+            && g_app_mode == AppMode::Library)
+            g_app_mode = AppMode::Develop;
 
-        // ── Develop Panel ──
+        // Develop-mode shortcuts
+        if (g_app_mode == AppMode::Develop) {
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && g_has_image)
+            {
+                VEGA_LOG_INFO("Saving recipe: {}", g_current_path.string());
+                vega::saveRecipe(g_current_path, g_recipe);
+            }
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && g_history.canUndo())
+            { g_recipe = g_history.undo(); reprocessPipeline(); }
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y) && g_history.canRedo())
+            { g_recipe = g_history.redo(); reprocessPipeline(); }
+            if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E) && g_has_image)
+                g_export_dialog.open(g_current_path);
+            if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !io.KeyCtrl && !io.KeyAlt)
+                g_show_before_after = !g_show_before_after;
+            if (ImGui::IsKeyPressed(ImGuiKey_M, false) && g_show_before_after)
+                g_before_after.toggleMode();
+            if (g_show_before_after)
+                g_before_after.setShowBefore(ImGui::IsKeyDown(ImGuiKey_Backslash));
+            if (ImGui::IsKeyPressed(ImGuiKey_W, false) && !io.KeyCtrl && g_has_image)
+                g_viewport.activateEyedropper();
+        }
+
+        // ── Toolbar (always visible, rendered before dockspace to reserve space) ──
+        // Already rendered above dockspace
+
+        // ── Folder Panel (visible in both modes) ──
+        {
+        char folder_title[128];
+        snprintf(folder_title, sizeof(folder_title), "%s###folders", vega::tr(vega::S::PANEL_FOLDERS));
+        ImGui::Begin(folder_title);
+        g_folder_panel.render();
+        // Show import progress
+        if (g_import_running) {
+            std::lock_guard<std::mutex> lock(g_import_mutex);
+            ImGui::Separator();
+            char progress_buf[128];
+            snprintf(progress_buf, sizeof(progress_buf), vega::tr(vega::S::IMPORT_PROGRESS),
+                     g_import_progress.processed, g_import_progress.total_files);
+            ImGui::TextDisabled("%s", progress_buf);
+        }
+        ImGui::End();
+        }
+
+        // ── Develop Panel (always rendered for docking) ──
         {
         char dev_title[128];
         snprintf(dev_title, sizeof(dev_title), "%s###develop", vega::tr(vega::S::PANEL_DEVELOP));
         ImGui::Begin(dev_title);
-        {
+        if (g_app_mode == AppMode::Develop) {
             if (g_develop_panel.render(g_recipe, g_history))
                 reprocessPipeline();
 
@@ -750,13 +1032,27 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui::End();
         }
 
-        // ── Viewport ──
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        // ── Viewport / Grid (single center panel, content switches by mode) ──
         {
+        bool zero_pad = (g_app_mode == AppMode::Develop);
+        if (zero_pad)
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+
         char vp_title[128];
         snprintf(vp_title, sizeof(vp_title), "%s###viewport", vega::tr(vega::S::PANEL_VIEWPORT));
         ImGui::Begin(vp_title);
-        {
+
+        if (g_app_mode == AppMode::Library) {
+            if (g_database.isOpen()) {
+                g_grid_view.render(g_database, g_thumb_cache);
+            } else {
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                const char* hint = vega::tr(vega::S::FOLDER_ADD);
+                ImVec2 ts = ImGui::CalcTextSize(hint);
+                ImGui::SetCursorPos(ImVec2((avail.x - ts.x) * 0.5f, (avail.y - ts.y) * 0.5f));
+                ImGui::TextDisabled("%s", hint);
+            }
+        } else {
             if (g_has_image && g_image_srv)
             {
                 if (g_show_before_after && g_before_srv)
@@ -768,32 +1064,34 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             else
             {
                 ImVec2 avail = ImGui::GetContentRegionAvail();
-                // Center welcome text
                 const char* welcome = vega::tr(vega::S::STATUS_OPEN_HINT);
                 ImVec2 ts = ImGui::CalcTextSize(welcome);
                 ImGui::SetCursorPos(ImVec2((avail.x - ts.x) * 0.5f, (avail.y - ts.y) * 0.5f));
                 ImGui::TextDisabled("%s", welcome);
             }
         }
-        ImGui::End();
-        }
-        ImGui::PopStyleVar();
 
-        // ── Histogram ──
+        ImGui::End();
+
+        if (zero_pad)
+            ImGui::PopStyleVar();
+        }
+
+        // ── Histogram (always rendered for docking) ──
         {
         char hist_title[128];
         snprintf(hist_title, sizeof(hist_title), "%s###histogram", vega::tr(vega::S::PANEL_HISTOGRAM));
         ImGui::Begin(hist_title);
-        g_histogram.render();
+        if (g_app_mode == AppMode::Develop) {
+            g_histogram.render();
+        }
         ImGui::End();
         }
 
         // ── Export Dialog ──
-        if (g_export_dialog.isOpen() && g_has_image)
+        if (g_app_mode == AppMode::Develop && g_export_dialog.isOpen() && g_has_image)
             if (g_rgba_ptr) {
-                // Export needs full-res data. If we only have preview, run full CPU pipeline.
                 if (g_rgba_ptr->size() != static_cast<size_t>(g_raw_image.width) * g_raw_image.height * 4) {
-                    // Force a full-res CPU process for export
                     static std::vector<uint8_t> s_export_buf;
                     const auto& full = g_pipeline.process(g_raw_image, g_recipe);
                     s_export_buf.assign(full.begin(), full.end());
@@ -841,6 +1139,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
     // Cleanup
     VEGA_LOG_INFO("Shutting down...");
+    g_database.close();
+    g_thumb_cache.clear();
     g_image_srv.Reset(); g_image_tex.Reset();
     g_before_srv.Reset(); g_before_tex.Reset();
     ImGui_ImplDX11_Shutdown();
@@ -850,6 +1150,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     g_ctx.cleanup();
     DestroyWindow(g_hwnd);
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
+    CoUninitialize();
     VEGA_LOG_INFO("=== Vega shutdown complete ===");
     return 0;
 }

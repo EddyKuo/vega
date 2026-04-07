@@ -211,34 +211,21 @@ ImportManager::ImportProgress ImportManager::import(
         progress.current_file = file_path.filename().string();
         progress.processed++;
 
-        // 1. Compute SHA-256 for dedup
-        std::string hash = computeFileHash(file_path);
-        if (hash.empty()) {
-            VEGA_LOG_WARN("ImportManager::import – skipping (hash failed): {}",
-                          file_path.string());
-            progress.failed++;
-            if (progress_cb) progress_cb(progress);
-            continue;
-        }
-
-        // 2. Check if already in database (by file path or hash)
+        // 1. Check if already in database by path (fast)
         auto existing = db.getPhotoByPath(file_path.string());
         if (existing.has_value()) {
-            VEGA_LOG_DEBUG("ImportManager::import – skipping duplicate (path): {}",
-                           file_path.string());
             progress.skipped_duplicate++;
             if (progress_cb) progress_cb(progress);
             continue;
         }
 
-        // 3. Read metadata from RAW file
+        // 2. Read metadata from RAW file
         auto meta_result = RawDecoder::readMetadata(file_path);
 
         PhotoRecord record;
         record.uuid = generateUUID();
         record.file_path = file_path.string();
         record.file_name = file_path.filename().string();
-        record.file_hash = hash;
 
         // Get file size
         std::error_code ec;
