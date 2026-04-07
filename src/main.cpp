@@ -549,14 +549,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_ctx.device(), g_ctx.context());
 
-    // Initialize GPU pipeline
-    if (g_settings.use_gpu && g_gpu_pipeline.initialize(g_ctx)) {
-        g_use_gpu = true;
-        VEGA_LOG_INFO("GPU pipeline enabled");
-    } else {
-        g_use_gpu = false;
-        VEGA_LOG_INFO("GPU pipeline unavailable, using CPU fallback");
+    // GPU pipeline: initialize but don't enable by default yet.
+    // GPU compute shaders need further debugging for correct output.
+    // CPU preview + background thread is fast enough (~18ms interactive).
+    if (g_settings.use_gpu) {
+        g_gpu_pipeline.initialize(g_ctx);
+        VEGA_LOG_INFO("GPU pipeline initialized (standby, using CPU path)");
     }
+    g_use_gpu = false;
 
     // Load fonts after backend init (ImGui requires backend before Build)
     {

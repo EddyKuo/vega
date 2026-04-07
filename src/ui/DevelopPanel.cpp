@@ -18,19 +18,11 @@ bool DevelopPanel::vegaSlider(const char* label, float* value, float min_val, fl
 {
     float old_value = *value;
 
-    // Use label as stable ID, display translated text
+    // PushID with raw English label ensures stable widget ID across languages
     ImGui::PushID(label);
 
-    // Build "TranslatedText###stableID" for the slider
-    char display[256];
-    const char* translated = tr(label);
-    // If tr() returned the key itself (no translation), use label as-is
-    if (translated == label || std::strcmp(translated, label) == 0)
-        snprintf(display, sizeof(display), "%s", label);
-    else
-        snprintf(display, sizeof(display), "%s###%s", translated, label);
-
-    bool changed = ImGui::SliderFloat(display, value, min_val, max_val, format);
+    const char* display_text = tr(label);
+    bool changed = ImGui::SliderFloat(display_text, value, min_val, max_val, format);
 
     // Double-click: reset to default
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
@@ -47,7 +39,7 @@ bool DevelopPanel::vegaSlider(const char* label, float* value, float min_val, fl
 
     if (ImGui::BeginPopup("##precision_input"))
     {
-        ImGui::Text("%s", translated);
+        ImGui::Text("%s", display_text);
         ImGui::Separator();
         ImGui::SetNextItemWidth(120.0f);
         if (ImGui::InputFloat("##val", value, 0.1f, 1.0f, format))
