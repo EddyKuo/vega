@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 
 echo [1/4] Setting up MSVC environment...
@@ -9,7 +10,7 @@ if %errorlevel% neq 0 (
 )
 
 set VCPKG_ROOT=C:\vcpkg
-set "PATH=C:\Program Files\CMake\bin;%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe;%PATH%"
+set "PATH=C:\Program Files\CMake\bin;%LOCALAPPDATA%\Microsoft\WinGet\Packages\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe;%LOCALAPPDATA%\Microsoft\WinGet\Packages\UPX.UPX_Microsoft.Winget.Source_8wekyb3d8bbwe\upx-5.1.1-win64;%PATH%"
 
 echo [2/4] Verifying tools...
 where cmake >nul 2>&1 || (echo ERROR: cmake not found & exit /b 1)
@@ -43,6 +44,16 @@ if "%BUILD_TYPE%"=="release" (
 if %errorlevel% neq 0 (
     echo ERROR: Build failed
     exit /b %errorlevel%
+)
+
+if "%BUILD_TYPE%"=="release" (
+    where upx >nul 2>&1
+    if !errorlevel! equ 0 (
+        echo [5/5] Compressing with UPX...
+        upx --best --lzma out\build\windows-x64-release\src\vega.exe 2>nul
+    ) else (
+        echo [5/5] UPX not found, skipping compression
+    )
 )
 
 echo BUILD SUCCESSFUL
