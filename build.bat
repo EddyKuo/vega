@@ -2,6 +2,11 @@
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 
+:: Usage: build.bat [debug|release] [upx]
+::   build.bat              -> debug build
+::   build.bat release      -> release build (no compression)
+::   build.bat release upx  -> release build + UPX compression
+
 echo [1/4] Setting up MSVC environment...
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 if %errorlevel% neq 0 (
@@ -20,6 +25,11 @@ echo cmake: OK, ninja: OK, cl: OK
 
 set BUILD_TYPE=%1
 if "%BUILD_TYPE%"=="" set BUILD_TYPE=debug
+if "%BUILD_TYPE%"=="upx" set BUILD_TYPE=debug
+
+set DO_UPX=0
+if "%2"=="upx" set DO_UPX=1
+if "%1"=="upx" set DO_UPX=1
 
 if "%BUILD_TYPE%"=="release" (
     echo [3/4] CMake configure [RELEASE]...
@@ -46,20 +56,24 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-if "%BUILD_TYPE%"=="release" (
-    where upx >nul 2>&1
-    if !errorlevel! equ 0 (
-        echo [5/5] Compressing with UPX...
-        for %%f in (out\build\windows-x64-release\src\vega.exe out\build\windows-x64-release\src\*.dll) do (
-            upx -t "%%f" >nul 2>&1
-            if !errorlevel! neq 0 (
-                upx --best --lzma "%%f" 2>nul
-            ) else (
-                echo     %%~nxf already packed, skipping
+if "%DO_UPX%"=="1" (
+    if "%BUILD_TYPE%"=="release" (
+        where upx >nul 2>&1
+        if !errorlevel! equ 0 (
+            echo [5/5] Compressing with UPX...
+            for %%f in (out\build\windows-x64-release\src\vega.exe out\build\windows-x64-release\src\*.dll) do (
+                upx -t "%%f" >nul 2>&1
+                if !errorlevel! neq 0 (
+                    upx --best --lzma "%%f" 2>nul
+                ) else (
+                    echo     %%~nxf already packed, skipping
+                )
             )
+        ) else (
+            echo [5/5] UPX not found, skipping compression
         )
     ) else (
-        echo [5/5] UPX not found, skipping compression
+        echo UPX compression only available for release builds
     )
 )
 
