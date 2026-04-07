@@ -138,9 +138,13 @@ static void uploadToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h
 // Launch full-res processing on background thread (CPU)
 static void launchBackgroundProcess()
 {
+    // Signal any running bg thread to stop — don't wait (non-blocking)
     g_bg_cancel = true;
-    for (int i = 0; i < 50 && g_bg_running; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    // If bg thread is still running, it will check g_bg_cancel and exit.
+    // We can safely launch a new one — the old one will finish harmlessly.
+    if (g_bg_running)
+        return;  // let current bg finish or cancel, don't pile up threads
 
     g_bg_cancel = false;
     g_bg_running = true;
@@ -163,13 +167,21 @@ static void launchBackgroundProcess()
     }).detach();
 }
 
-// CPU preview on UI thread (fast, 1/4 res)
+// CPU preview on UI thread (1/8 res, skip heavy nodes)
 static void reprocessPreview()
 {
     if (!g_has_image) return;
     vega::Timer timer;
+
+    // Use a lightweight recipe for preview — skip denoise/sharpen
+    // (they're barely visible at 1/8 res and cost 300ms+ each)
+    vega::EditRecipe preview_recipe = g_recipe;
+    preview_recipe.denoise_luminance = 0;
+    preview_recipe.denoise_color = 0;
+    preview_recipe.sharpen_amount = 0;
+
     uint32_t pw, ph;
-    const auto& rgba = g_pipeline.processPreview(g_raw_image, g_recipe, 4, pw, ph);
+    const auto& rgba = g_pipeline.processPreview(g_raw_image, preview_recipe, 8, pw, ph);
     g_rgba_ptr = &rgba;
     g_last_pipeline_ms = timer.elapsed_ms();
     g_display_w = pw;
