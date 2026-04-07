@@ -130,10 +130,22 @@ void GPUPipeline::uploadRawData(const RawImage& raw)
         int h = static_cast<int>(height);
         uint32_t pattern = raw.metadata.bayer_pattern;
 
+        // Pre-compute WB multipliers (applied BEFORE demosaic, same as CPU pipeline)
+        float wb_mul[3];
+        {
+            float g_norm = (raw.wb_multipliers[1] + raw.wb_multipliers[3]) * 0.5f;
+            if (g_norm <= 0.0f) g_norm = 1.0f;
+            wb_mul[0] = raw.wb_multipliers[0] / g_norm;
+            wb_mul[1] = 1.0f;
+            wb_mul[2] = raw.wb_multipliers[2] / g_norm;
+        }
+
         auto sample = [&](int r, int c) -> float {
             r = clampCoord(r, h);
             c = clampCoord(c, w);
-            return bayer[r * w + c];
+            float val = bayer[r * w + c];
+            int ch = bayerChannel(pattern, r, c);
+            return val * wb_mul[ch];  // WB baked into sample, before interpolation
         };
 
         for (int r = 0; r < h; ++r) {
@@ -184,52 +196,23 @@ void GPUPipeline::uploadRawData(const RawImage& raw)
         }
     }
 
-    // Apply camera white balance
+    // Camera WB is already applied per-pixel in sample() above.
+
+    // Apply camera color matrix (rgb_cam: camera -> sRGB directly)
     {
-        float g_norm = (raw.wb_multipliers[1] + raw.wb_multipliers[3]) * 0.5f;
-        if (g_norm <= 0.0f) g_norm = 1.0f;
-        float r_scale = raw.wb_multipliers[0] / g_norm;
-        float b_scale = raw.wb_multipliers[2] / g_norm;
-
-        for (uint32_t i = 0; i < pixel_count; ++i) {
-            rgb[i * 3 + 0] *= r_scale;
-            rgb[i * 3 + 2] *= b_scale;
-        }
-    }
-
-    // Apply camera color matrix (cam RGB -> XYZ -> linear sRGB)
-    {
-        static constexpr float xyz_to_srgb[9] = {
-             3.2404542f, -1.5371385f, -0.4985314f,
-            -0.9692660f,  1.8760108f,  0.0415560f,
-             0.0556434f, -0.2040259f,  1.0572252f
-        };
-
+        const float* M = raw.color_matrix;
         bool has_matrix = false;
         for (int i = 0; i < 9; ++i) {
-            if (raw.color_matrix[i] != 0.0f) {
-                has_matrix = true;
-                break;
-            }
+            if (M[i] != 0.0f) { has_matrix = true; break; }
         }
 
         if (has_matrix) {
-            float combined[9] = {};
-            for (int r = 0; r < 3; ++r) {
-                for (int c = 0; c < 3; ++c) {
-                    combined[r * 3 + c] =
-                        xyz_to_srgb[r * 3 + 0] * raw.color_matrix[0 * 3 + c] +
-                        xyz_to_srgb[r * 3 + 1] * raw.color_matrix[1 * 3 + c] +
-                        xyz_to_srgb[r * 3 + 2] * raw.color_matrix[2 * 3 + c];
-                }
-            }
-
             for (uint32_t i = 0; i < pixel_count; ++i) {
                 float* p = rgb.data() + i * 3;
                 float in_r = p[0], in_g = p[1], in_b = p[2];
-                p[0] = combined[0] * in_r + combined[1] * in_g + combined[2] * in_b;
-                p[1] = combined[3] * in_r + combined[4] * in_g + combined[5] * in_b;
-                p[2] = combined[6] * in_r + combined[7] * in_g + combined[8] * in_b;
+                p[0] = M[0] * in_r + M[1] * in_g + M[2] * in_b;
+                p[1] = M[3] * in_r + M[4] * in_g + M[5] * in_b;
+                p[2] = M[6] * in_r + M[7] * in_g + M[8] * in_b;
             }
         }
     }
