@@ -186,21 +186,16 @@ static void checkPendingBackground()
     }
 }
 
-// CPU preview on UI thread (1/8 res, skip heavy nodes)
+// CPU preview on UI thread (1/8 res, reduced denoise/sharpen radius)
 static void reprocessPreview()
 {
     if (!g_has_image) return;
     vega::Timer timer;
 
-    // Use a lightweight recipe for preview — skip denoise/sharpen
-    // (they're barely visible at 1/8 res and cost 300ms+ each)
-    vega::EditRecipe preview_recipe = g_recipe;
-    preview_recipe.denoise_luminance = 0;
-    preview_recipe.denoise_color = 0;
-    preview_recipe.sharpen_amount = 0;
-
+    // At 1/8 res (740x493), all nodes are fast. Keep denoise/sharpen
+    // so the user sees their effect immediately.
     uint32_t pw, ph;
-    const auto& rgba = g_pipeline.processPreview(g_raw_image, preview_recipe, 8, pw, ph);
+    const auto& rgba = g_pipeline.processPreview(g_raw_image, g_recipe, 8, pw, ph);
     g_rgba_ptr = &rgba;
     g_last_pipeline_ms = timer.elapsed_ms();
     g_display_w = pw;

@@ -43,7 +43,7 @@ void ExposureNode::process(Tile& tile, const EditRecipe& recipe)
         float s = contrast / 100.0f;
         if (s > 0.0f) {
             contrast_pos = true;
-            sig_k = (1.0f + s * 4.0f) * 6.0f;
+            sig_k = (1.0f + s * 2.0f) * 4.0f;
             float sig0 = 1.0f / (1.0f + fast_exp(sig_k * 0.5f));
             float sig1 = 1.0f / (1.0f + fast_exp(-sig_k * 0.5f));
             sig_offset = sig0;

@@ -52,10 +52,10 @@ float ContrastCurve(float x, float strength)
     if (s > 0.0f)
     {
         // Sigmoidal contrast increase
-        float k = 1.0f + s * 4.0f;
-        float sig  = 1.0f / (1.0f + exp(-k * (t - 0.5f) * 6.0f));
-        float sig0 = 1.0f / (1.0f + exp(-k * (-0.5f) * 6.0f));
-        float sig1 = 1.0f / (1.0f + exp(-k * (0.5f) * 6.0f));
+        float k = 1.0f + s * 2.0f;
+        float sig  = 1.0f / (1.0f + exp(-k * (t - 0.5f) * 4.0f));
+        float sig0 = 1.0f / (1.0f + exp(-k * (-0.5f) * 4.0f));
+        float sig1 = 1.0f / (1.0f + exp(-k * (0.5f) * 4.0f));
         return (sig - sig0) / (sig1 - sig0);
     }
     else
