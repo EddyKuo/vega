@@ -30,6 +30,7 @@
 #include "ui/Toolbar.h"
 #include "ui/StatusBar.h"
 #include "core/i18n.h"
+#include "pipeline/GPUPipeline.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -39,6 +40,8 @@ static vega::ImageViewport g_viewport;
 static vega::DevelopPanel g_develop_panel;
 static vega::HistogramView g_histogram;
 static vega::Pipeline g_pipeline;
+static vega::GPUPipeline g_gpu_pipeline;
+static bool g_use_gpu = false;  // true once GPU pipeline init succeeds
 static vega::EditRecipe g_recipe;
 static vega::EditHistory g_history;
 static vega::BeforeAfter g_before_after;
@@ -132,13 +135,35 @@ static void uploadToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h
         g_ctx.device()->CreateShaderResourceView(tex.Get(), nullptr, &srv);
 }
 
-// Launch full-res processing on background thread
+// GPU pipeline: process on GPU, result stays as SRV (no CPU readback)
+static void reprocessGPU()
+{
+    if (!g_has_image) return;
+    vega::Timer timer;
+    ID3D11ShaderResourceView* srv = g_gpu_pipeline.process(g_raw_image, g_recipe);
+    g_last_pipeline_ms = timer.elapsed_ms();
+    if (srv) {
+        g_image_srv.Reset();
+        g_image_tex.Reset();
+        // GPUPipeline owns the SRV. We AddRef so our ComPtr doesn't
+        // destroy it when we reset, and GPUPipeline can still manage it.
+        srv->AddRef();
+        g_image_srv.Attach(srv);
+        g_display_w = g_raw_image.width;
+        g_display_h = g_raw_image.height;
+        g_is_preview = false;
+    }
+    // Histogram from GPU would need readback; use preview CPU for histogram
+    uint32_t pw, ph;
+    const auto& preview_rgba = g_pipeline.processPreview(g_raw_image, g_recipe, 8, pw, ph);
+    g_rgba_ptr = &preview_rgba;
+    g_histogram.compute(preview_rgba.data(), pw, ph);
+}
+
+// Launch full-res processing on background thread (CPU fallback)
 static void launchBackgroundProcess()
 {
-    // Cancel any running bg work
     g_bg_cancel = true;
-
-    // Wait briefly if bg thread is still running
     for (int i = 0; i < 50 && g_bg_running; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
@@ -146,18 +171,11 @@ static void launchBackgroundProcess()
     g_bg_running = true;
     g_bg_ready = false;
 
-    // Capture recipe by value for the thread
     vega::EditRecipe recipe_copy = g_recipe;
-
     std::thread([recipe_copy]() {
         vega::Timer timer;
         const auto& rgba = g_bg_pipeline.process(g_raw_image, recipe_copy);
-
-        if (g_bg_cancel) {
-            g_bg_running = false;
-            return;
-        }
-
+        if (g_bg_cancel) { g_bg_running = false; return; }
         {
             std::lock_guard<std::mutex> lock(g_bg_mutex);
             g_bg_result.assign(rgba.begin(), rgba.end());
@@ -170,7 +188,7 @@ static void launchBackgroundProcess()
     }).detach();
 }
 
-// Preview on UI thread (fast, 1/4 res)
+// CPU preview on UI thread (fast, 1/4 res)
 static void reprocessPreview()
 {
     if (!g_has_image) return;
@@ -186,24 +204,26 @@ static void reprocessPreview()
     g_histogram.compute(rgba.data(), pw, ph);
 }
 
-// Called when slider changes
+// Main entry: choose GPU or CPU path
 static void reprocessPipeline()
 {
     if (!g_has_image) return;
 
-    // Always show preview immediately (non-blocking)
-    reprocessPreview();
-
-    // Queue full-res in background
-    g_needs_full_res = true;
-    launchBackgroundProcess();
+    if (g_use_gpu) {
+        // GPU path: full res, non-blocking (GPU is fast enough)
+        reprocessGPU();
+    } else {
+        // CPU path: preview + background full-res
+        reprocessPreview();
+        g_needs_full_res = true;
+        launchBackgroundProcess();
+    }
 }
 
-// Check if background result is ready and upload it (call every frame)
+// Check if background CPU result is ready
 static void pollBackgroundResult()
 {
     if (!g_bg_ready) return;
-
     std::lock_guard<std::mutex> lock(g_bg_mutex);
     g_last_pipeline_ms = g_bg_pipeline_ms;
     g_display_w = g_bg_w;
@@ -274,6 +294,10 @@ static void openRawFile()
     g_recipe = saved ? *saved : vega::EditRecipe{};
     g_history.clear();
     g_has_image = true;
+
+    // Upload to GPU if available
+    if (g_use_gpu)
+        g_gpu_pipeline.uploadRawData(g_raw_image);
 
     vega::Timer pipeline_timer;
     reprocessPipeline();
@@ -530,6 +554,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_ctx.device(), g_ctx.context());
 
+    // Initialize GPU pipeline
+    if (g_settings.use_gpu && g_gpu_pipeline.initialize(g_ctx)) {
+        g_use_gpu = true;
+        VEGA_LOG_INFO("GPU pipeline enabled");
+    } else {
+        g_use_gpu = false;
+        VEGA_LOG_INFO("GPU pipeline unavailable, using CPU fallback");
+    }
+
     // Load fonts after backend init (ImGui requires backend before Build)
     {
         ImFontConfig latin_cfg;
@@ -744,7 +777,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             g_status_bar.undo_current = g_history.currentIndex() + 1;
             g_status_bar.undo_total = g_history.totalEntries();
             g_status_bar.pipeline_ms = static_cast<float>(g_last_pipeline_ms);
-            g_status_bar.use_gpu = false; // GPU pipeline not wired yet
+            g_status_bar.use_gpu = g_use_gpu;
             g_status_bar.render();
         }
 

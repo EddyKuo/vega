@@ -471,6 +471,8 @@ std::filesystem::path GPUPipeline::shaderDir() const
         exe_dir / "shaders",
         exe_dir / ".." / "shaders",
         exe_dir / ".." / ".." / "shaders",
+        exe_dir / ".." / ".." / ".." / "shaders",
+        exe_dir / ".." / ".." / ".." / ".." / "shaders",
         fs::path("shaders"),  // CWD-relative fallback
     };
 
@@ -512,9 +514,9 @@ void GPUPipeline::loadShaders()
         }
     };
 
-    tryLoad(wb_exposure_shader_, "wb_exposure_compute.hlsl");
-    tryLoad(tone_curve_shader_,  "tone_curve_compute.hlsl");
-    tryLoad(hsl_shader_,         "hsl_compute.hlsl");
+    tryLoad(wb_exposure_shader_, "white_balance_exposure.hlsl");
+    tryLoad(tone_curve_shader_,  "tone_curve.hlsl");
+    tryLoad(hsl_shader_,         "hsl_adjust.hlsl");
     tryLoad(histogram_shader_,   "histogram_compute.hlsl");
 }
 
