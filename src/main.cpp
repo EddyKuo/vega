@@ -135,26 +135,35 @@ static void uploadToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h
         g_ctx.device()->CreateShaderResourceView(tex.Get(), nullptr, &srv);
 }
 
+// Pending recipe for bg thread to pick up when current run finishes
+static vega::EditRecipe g_bg_pending_recipe;
+static std::atomic<bool> g_bg_has_pending{false};
+
 // Launch full-res processing on background thread (CPU)
 static void launchBackgroundProcess()
 {
-    // Signal any running bg thread to stop — don't wait (non-blocking)
-    g_bg_cancel = true;
-
-    // If bg thread is still running, it will check g_bg_cancel and exit.
-    // We can safely launch a new one — the old one will finish harmlessly.
-    if (g_bg_running)
-        return;  // let current bg finish or cancel, don't pile up threads
+    if (g_bg_running) {
+        // Thread busy — queue this recipe for when it finishes
+        g_bg_pending_recipe = g_recipe;
+        g_bg_has_pending = true;
+        g_bg_cancel = true;  // cancel current work so it picks up pending faster
+        return;
+    }
 
     g_bg_cancel = false;
     g_bg_running = true;
     g_bg_ready = false;
+    g_bg_has_pending = false;
 
     vega::EditRecipe recipe_copy = g_recipe;
     std::thread([recipe_copy]() {
         vega::Timer timer;
         const auto& rgba = g_bg_pipeline.process(g_raw_image, recipe_copy);
-        if (g_bg_cancel) { g_bg_running = false; return; }
+        if (g_bg_cancel) {
+            // Cancelled — check if there's a pending recipe to process instead
+            g_bg_running = false;
+            return;
+        }
         {
             std::lock_guard<std::mutex> lock(g_bg_mutex);
             g_bg_result.assign(rgba.begin(), rgba.end());
@@ -165,6 +174,16 @@ static void launchBackgroundProcess()
         g_bg_ready = true;
         g_bg_running = false;
     }).detach();
+}
+
+// Call every frame: if bg finished and there's a pending recipe, relaunch
+static void checkPendingBackground()
+{
+    if (!g_bg_running && g_bg_has_pending) {
+        g_bg_has_pending = false;
+        g_recipe = g_bg_pending_recipe;  // already set
+        launchBackgroundProcess();
+    }
 }
 
 // CPU preview on UI thread (1/8 res, skip heavy nodes)
@@ -668,8 +687,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // Poll background pipeline result
+        // Poll background pipeline result + relaunch if pending
         pollBackgroundResult();
+        checkPendingBackground();
 
         // Menu bar
         renderMenuBar();
