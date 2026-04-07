@@ -135,32 +135,7 @@ static void uploadToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h
         g_ctx.device()->CreateShaderResourceView(tex.Get(), nullptr, &srv);
 }
 
-// GPU pipeline: process on GPU, result stays as SRV (no CPU readback)
-static void reprocessGPU()
-{
-    if (!g_has_image) return;
-    vega::Timer timer;
-    ID3D11ShaderResourceView* srv = g_gpu_pipeline.process(g_raw_image, g_recipe);
-    g_last_pipeline_ms = timer.elapsed_ms();
-    if (srv) {
-        g_image_srv.Reset();
-        g_image_tex.Reset();
-        // GPUPipeline owns the SRV. We AddRef so our ComPtr doesn't
-        // destroy it when we reset, and GPUPipeline can still manage it.
-        srv->AddRef();
-        g_image_srv.Attach(srv);
-        g_display_w = g_raw_image.width;
-        g_display_h = g_raw_image.height;
-        g_is_preview = false;
-    }
-    // Histogram from GPU would need readback; use preview CPU for histogram
-    uint32_t pw, ph;
-    const auto& preview_rgba = g_pipeline.processPreview(g_raw_image, g_recipe, 8, pw, ph);
-    g_rgba_ptr = &preview_rgba;
-    g_histogram.compute(preview_rgba.data(), pw, ph);
-}
-
-// Launch full-res processing on background thread (CPU fallback)
+// Launch full-res processing on background thread (CPU)
 static void launchBackgroundProcess()
 {
     g_bg_cancel = true;
@@ -204,20 +179,40 @@ static void reprocessPreview()
     g_histogram.compute(rgba.data(), pw, ph);
 }
 
-// Main entry: choose GPU or CPU path
+// Main entry: try GPU first, fallback to CPU preview + background
 static void reprocessPipeline()
 {
     if (!g_has_image) return;
 
     if (g_use_gpu) {
-        // GPU path: full res, non-blocking (GPU is fast enough)
-        reprocessGPU();
-    } else {
-        // CPU path: preview + background full-res
-        reprocessPreview();
-        g_needs_full_res = true;
-        launchBackgroundProcess();
+        vega::Timer timer;
+        ID3D11ShaderResourceView* srv = g_gpu_pipeline.process(g_raw_image, g_recipe);
+        double ms = timer.elapsed_ms();
+        if (srv) {
+            g_image_srv.Reset();
+            g_image_tex.Reset();
+            srv->AddRef();
+            g_image_srv.Attach(srv);
+            g_display_w = g_raw_image.width;
+            g_display_h = g_raw_image.height;
+            g_is_preview = false;
+            g_last_pipeline_ms = ms;
+            // Histogram from CPU preview (small, fast)
+            uint32_t pw, ph;
+            const auto& pr = g_pipeline.processPreview(g_raw_image, g_recipe, 8, pw, ph);
+            g_rgba_ptr = &pr;
+            g_histogram.compute(pr.data(), pw, ph);
+            return;
+        }
+        // GPU failed — disable and fallback
+        VEGA_LOG_WARN("GPU pipeline returned null, disabling GPU");
+        g_use_gpu = false;
     }
+
+    // CPU path: instant preview + deferred full-res
+    reprocessPreview();
+    g_needs_full_res = true;
+    launchBackgroundProcess();
 }
 
 // Check if background CPU result is ready
