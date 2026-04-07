@@ -4,16 +4,21 @@
 #include <imgui.h>
 #include <vector>
 #include <cstdint>
+#include <functional>
 
 namespace vega {
 
 class GridView {
 public:
+    using DoubleClickCallback = std::function<void(int64_t photo_id, const std::string& file_path)>;
+
     void render(Database& db, ThumbnailCache& cache);
 
     int64_t selectedPhotoId() const;
     void setFilter(const Database::FilterCriteria& filter);
     void refresh();
+
+    void setOnDoubleClick(DoubleClickCallback cb) { on_double_click_ = std::move(cb); }
 
 private:
     float thumb_size_ = 200.0f;
@@ -21,6 +26,8 @@ private:
     Database::FilterCriteria filter_;
     std::vector<PhotoRecord> visible_photos_;
     bool needs_refresh_ = true;
+
+    DoubleClickCallback on_double_click_;
 
     // Render individual photo cell: thumbnail, rating stars, color dot, flag
     void renderPhotoCell(const PhotoRecord& photo, ThumbnailCache& cache,

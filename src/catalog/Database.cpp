@@ -141,7 +141,7 @@ bool Database::createTables()
 
     if (!exec(photo_tags_sql)) return false;
 
-    // FTS5 virtual table for full-text search on file_name, caption, camera info
+    // FTS5 virtual table for full-text search (optional — not all SQLite builds have it)
     const char* fts_sql = R"SQL(
         CREATE VIRTUAL TABLE IF NOT EXISTS photos_fts USING fts5(
             file_name,
@@ -154,35 +154,35 @@ bool Database::createTables()
         );
     )SQL";
 
-    if (!exec(fts_sql)) return false;
+    if (exec(fts_sql)) {
+        // Triggers to keep FTS in sync
+        exec(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS photos_ai AFTER INSERT ON photos BEGIN
+                INSERT INTO photos_fts(rowid, file_name, caption, camera_make, camera_model, lens_model)
+                VALUES (new.id, new.file_name, new.caption, new.camera_make, new.camera_model, new.lens_model);
+            END;
+        )SQL");
 
-    // Triggers to keep FTS in sync
-    const char* fts_insert_trigger = R"SQL(
-        CREATE TRIGGER IF NOT EXISTS photos_ai AFTER INSERT ON photos BEGIN
-            INSERT INTO photos_fts(rowid, file_name, caption, camera_make, camera_model, lens_model)
-            VALUES (new.id, new.file_name, new.caption, new.camera_make, new.camera_model, new.lens_model);
-        END;
-    )SQL";
+        exec(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS photos_ad AFTER DELETE ON photos BEGIN
+                INSERT INTO photos_fts(photos_fts, rowid, file_name, caption, camera_make, camera_model, lens_model)
+                VALUES ('delete', old.id, old.file_name, old.caption, old.camera_make, old.camera_model, old.lens_model);
+            END;
+        )SQL");
 
-    const char* fts_delete_trigger = R"SQL(
-        CREATE TRIGGER IF NOT EXISTS photos_ad AFTER DELETE ON photos BEGIN
-            INSERT INTO photos_fts(photos_fts, rowid, file_name, caption, camera_make, camera_model, lens_model)
-            VALUES ('delete', old.id, old.file_name, old.caption, old.camera_make, old.camera_model, old.lens_model);
-        END;
-    )SQL";
+        exec(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS photos_au AFTER UPDATE ON photos BEGIN
+                INSERT INTO photos_fts(photos_fts, rowid, file_name, caption, camera_make, camera_model, lens_model)
+                VALUES ('delete', old.id, old.file_name, old.caption, old.camera_make, old.camera_model, old.lens_model);
+                INSERT INTO photos_fts(rowid, file_name, caption, camera_make, camera_model, lens_model)
+                VALUES (new.id, new.file_name, new.caption, new.camera_make, new.camera_model, new.lens_model);
+            END;
+        )SQL");
 
-    const char* fts_update_trigger = R"SQL(
-        CREATE TRIGGER IF NOT EXISTS photos_au AFTER UPDATE ON photos BEGIN
-            INSERT INTO photos_fts(photos_fts, rowid, file_name, caption, camera_make, camera_model, lens_model)
-            VALUES ('delete', old.id, old.file_name, old.caption, old.camera_make, old.camera_model, old.lens_model);
-            INSERT INTO photos_fts(rowid, file_name, caption, camera_make, camera_model, lens_model)
-            VALUES (new.id, new.file_name, new.caption, new.camera_make, new.camera_model, new.lens_model);
-        END;
-    )SQL";
-
-    if (!exec(fts_insert_trigger)) return false;
-    if (!exec(fts_delete_trigger)) return false;
-    if (!exec(fts_update_trigger)) return false;
+        VEGA_LOG_INFO("Database: FTS5 full-text search enabled");
+    } else {
+        VEGA_LOG_WARN("Database: FTS5 not available, full-text search disabled");
+    }
 
     return true;
 }
@@ -613,8 +613,22 @@ std::vector<PhotoRecord> Database::filter(const FilterCriteria& criteria)
     std::vector<PhotoRecord> results;
     if (!db_) return results;
 
-    // If there is a search_text, we need to join with the FTS table
+    // If there is a search_text, try FTS (may not be available)
     bool use_fts = !criteria.search_text.empty();
+    // Check if FTS5 table exists
+    if (use_fts) {
+        sqlite3_stmt* check = nullptr;
+        if (sqlite3_prepare_v2(db_, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='photos_fts'",
+                               -1, &check, nullptr) == SQLITE_OK) {
+            use_fts = (sqlite3_step(check) == SQLITE_ROW);
+            sqlite3_finalize(check);
+        } else {
+            use_fts = false;
+        }
+        if (!use_fts) {
+            // Fallback: use LIKE on file_name
+        }
+    }
 
     std::ostringstream sql;
     sql << SELECT_ALL_COLUMNS;
@@ -636,6 +650,14 @@ std::vector<PhotoRecord> Database::filter(const FilterCriteria& criteria)
     }
     if (criteria.flag >= 0) {
         sql << " AND flag = " << criteria.flag;
+    }
+    if (!criteria.folder_path.empty()) {
+        sql << " AND file_path LIKE ?";
+        std::string prefix = criteria.folder_path;
+        char last = prefix.back();
+        if (last != '\\' && last != '/')
+            prefix += '\\';
+        text_binds.push_back(prefix + "%");
     }
     if (!criteria.camera_model.empty()) {
         sql << " AND camera_model = ?";
@@ -693,6 +715,32 @@ int64_t Database::photoCount()
     const char* sql = "SELECT COUNT(*) FROM photos;";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return 0;
+
+    int64_t count = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        count = sqlite3_column_int64(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return count;
+}
+
+int64_t Database::countByFolder(const std::string& folder_path)
+{
+    if (!db_ || folder_path.empty()) return 0;
+
+    // Ensure folder path ends with separator for precise prefix matching
+    std::string prefix = folder_path;
+    char last = prefix.back();
+    if (last != '\\' && last != '/')
+        prefix += '\\';
+
+    const char* sql = "SELECT COUNT(*) FROM photos WHERE file_path LIKE ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return 0;
+
+    std::string pattern = prefix + "%";
+    sqlite3_bind_text(stmt, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
 
     int64_t count = 0;
     if (sqlite3_step(stmt) == SQLITE_ROW) {

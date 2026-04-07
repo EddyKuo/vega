@@ -57,6 +57,12 @@ void I18n::initEN()
     m["panel.viewport"]     = "Viewport";
     m["panel.histogram"]    = "Histogram";
     m["panel.metadata"]     = "Metadata";
+    m["panel.folders"]      = "Folders";
+    m["panel.grid"]         = "Library";
+    m["folder.add"]         = "+ Add Folder";
+    m["folder.remove"]      = "Remove Folder";
+    m["folder.all_photos"]  = "All Photos";
+    m["import.progress"]    = "Importing: %d / %d";
 
     // White Balance
     m["wb.header"]          = "White Balance";
@@ -174,6 +180,12 @@ void I18n::initZH()
     m["panel.viewport"]     = "\u9810\u89bd";           // 預覽
     m["panel.histogram"]    = "\u76f4\u65b9\u5716";     // 直方圖
     m["panel.metadata"]     = "\u5143\u8cc7\u6599";     // 元資料
+    m["panel.folders"]      = "\u8cc7\u6599\u593e";     // 資料夾
+    m["panel.grid"]         = "\u5716\u5eab";           // 圖庫
+    m["folder.add"]         = "+ \u65b0\u589e\u8cc7\u6599\u593e";  // + 新增資料夾
+    m["folder.remove"]      = "\u79fb\u9664\u8cc7\u6599\u593e";     // 移除資料夾
+    m["folder.all_photos"]  = "\u6240\u6709\u7167\u7247";           // 所有照片
+    m["import.progress"]    = "\u532f\u5165\u4e2d: %d / %d";        // 匯入中: %d / %d
 
     // White Balance
     m["wb.header"]          = "\u767d\u5e73\u8861";     // 白平衡

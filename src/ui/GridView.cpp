@@ -3,6 +3,7 @@
 #include "core/Logger.h"
 
 #include <imgui.h>
+#include <d3d11.h>
 #include <algorithm>
 #include <cmath>
 
@@ -126,6 +127,7 @@ void GridView::render(Database& db, ThumbnailCache& cache)
     // Set cursor position for the first visible row (creates virtual space above)
     if (first_visible_row > 0) {
         ImGui::SetCursorPosY(first_visible_row * cell_height);
+        ImGui::Dummy(ImVec2(0, 0));
     }
 
     // Render visible rows
@@ -147,7 +149,7 @@ void GridView::render(Database& db, ThumbnailCache& cache)
         float total_content_height = total_rows * cell_height;
         float current_y = ImGui::GetCursorPosY();
         if (current_y < total_content_height) {
-            ImGui::SetCursorPosY(total_content_height);
+            ImGui::Dummy(ImVec2(0, total_content_height - current_y));
         }
     }
 
@@ -186,9 +188,36 @@ void GridView::renderPhotoCell(const PhotoRecord& photo, ThumbnailCache& cache,
     float thumb_draw_size = cell_size - 8.0f;
 
     if (srv) {
+        // Get actual texture dimensions to preserve aspect ratio
+        ID3D11Resource* res = nullptr;
+        srv->GetResource(&res);
+        ID3D11Texture2D* tex2d = nullptr;
+        float img_w = thumb_draw_size, img_h = thumb_draw_size;
+        if (res && SUCCEEDED(res->QueryInterface(__uuidof(ID3D11Texture2D),
+                             reinterpret_cast<void**>(&tex2d)))) {
+            D3D11_TEXTURE2D_DESC desc;
+            tex2d->GetDesc(&desc);
+            float aspect = static_cast<float>(desc.Width) / static_cast<float>(desc.Height);
+            if (aspect > 1.0f) {
+                img_w = thumb_draw_size;
+                img_h = thumb_draw_size / aspect;
+            } else {
+                img_h = thumb_draw_size;
+                img_w = thumb_draw_size * aspect;
+            }
+            tex2d->Release();
+        }
+        if (res) res->Release();
+
+        // Center the image within the cell
+        float offset_x = (thumb_draw_size - img_w) * 0.5f;
+        float offset_y = (thumb_draw_size - img_h) * 0.5f;
+        ImGui::SetCursorScreenPos(ImVec2(thumb_pos.x + offset_x, thumb_pos.y + offset_y));
+        ImGui::Image(reinterpret_cast<ImTextureID>(srv), ImVec2(img_w, img_h));
+
+        // Ensure cursor advances by the full cell size
         ImGui::SetCursorScreenPos(thumb_pos);
-        ImGui::Image(reinterpret_cast<ImTextureID>(srv),
-                     ImVec2(thumb_draw_size, thumb_draw_size));
+        ImGui::Dummy(ImVec2(thumb_draw_size, thumb_draw_size));
     } else {
         // Placeholder rectangle
         draw_list->AddRectFilled(
@@ -215,9 +244,13 @@ void GridView::renderPhotoCell(const PhotoRecord& photo, ThumbnailCache& cache,
         ImGui::Dummy(ImVec2(thumb_draw_size, thumb_draw_size));
     }
 
-    // Click to select
+    // Click to select, double-click to open
     if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
         selected_id_ = photo.id;
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+        selected_id_ = photo.id;
+        if (on_double_click_) on_double_click_(photo.id, photo.file_path);
     }
 
     // ----- Info below thumbnail -----

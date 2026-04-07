@@ -23,6 +23,7 @@ struct AppSettings {
     std::string last_open_dir;
     std::string last_export_dir;
     std::string catalog_path;
+    std::vector<std::string> library_folders;
 
     // Load/Save
     static AppSettings load();

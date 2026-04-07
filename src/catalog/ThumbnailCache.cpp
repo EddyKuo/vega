@@ -153,8 +153,7 @@ void ThumbnailCache::initialize(const std::filesystem::path& cache_dir,
                       ec.message());
     }
 
-    // Initialize COM for WIC (may already be initialized by the app)
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    // COM should already be initialized by the application (STA for UI thread)
 
     VEGA_LOG_INFO("ThumbnailCache::initialize – cache dir: {}", cache_dir_.string());
 }

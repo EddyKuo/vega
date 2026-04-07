@@ -28,6 +28,14 @@ namespace S {
     inline constexpr const char* PANEL_VIEWPORT     = "panel.viewport";
     inline constexpr const char* PANEL_HISTOGRAM    = "panel.histogram";
     inline constexpr const char* PANEL_METADATA     = "panel.metadata";
+    inline constexpr const char* PANEL_FOLDERS      = "panel.folders";
+    inline constexpr const char* PANEL_GRID         = "panel.grid";
+
+    // Folder panel
+    inline constexpr const char* FOLDER_ADD         = "folder.add";
+    inline constexpr const char* FOLDER_REMOVE      = "folder.remove";
+    inline constexpr const char* FOLDER_ALL_PHOTOS  = "folder.all_photos";
+    inline constexpr const char* IMPORT_PROGRESS    = "import.progress";
 
     // White Balance
     inline constexpr const char* WB_HEADER          = "wb.header";
