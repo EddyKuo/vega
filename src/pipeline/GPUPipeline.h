@@ -80,6 +80,7 @@ private:
     static constexpr uint32_t CURVE_LUT_SIZE = 4096;
     ComPtr<ID3D11Texture1D>          curve_luts_[4]; // RGB master, R, G, B
     ComPtr<ID3D11ShaderResourceView> curve_srvs_[4];
+    ComPtr<ID3D11SamplerState>       linear_sampler_;
 
     // ── Internal helpers ──
     void loadShaders();

@@ -10,17 +10,13 @@
 
 #include "common.hlsli"
 
-cbuffer Params : register(b0)
+// Dimensions from slot b2 (shared across all shaders)
+cbuffer Dimensions : register(b2)
 {
-    uint  cb_width;
-    uint  cb_height;
-    uint  cb_has_rgb;   // 1 if master RGB curve is active
-    uint  cb_has_r;     // 1 if per-channel R curve is active
-
-    uint  cb_has_g;     // 1 if per-channel G curve is active
-    uint  cb_has_b;     // 1 if per-channel B curve is active
-    float _pad0;
-    float _pad1;
+    uint cb_src_width;
+    uint cb_src_height;
+    uint cb_dst_width;
+    uint cb_dst_height;
 };
 
 Texture2D<float4>   Input   : register(t0);
@@ -44,23 +40,20 @@ float SampleLUT(Texture1D<float> lut, float x)
 [numthreads(16, 16, 1)]
 void CSMain(uint3 dtid : SV_DispatchThreadID)
 {
-    if (dtid.x >= cb_width || dtid.y >= cb_height)
+    if (dtid.x >= cb_dst_width || dtid.y >= cb_dst_height)
         return;
 
     float4 pixel = Input.Load(int3(dtid.xy, 0));
 
-    // Apply master RGB curve first (same curve to all three channels)
-    if (cb_has_rgb)
-    {
-        pixel.r = SampleLUT(LUT_RGB, pixel.r);
-        pixel.g = SampleLUT(LUT_RGB, pixel.g);
-        pixel.b = SampleLUT(LUT_RGB, pixel.b);
-    }
+    // Apply master RGB curve, then per-channel curves.
+    // LUTs are always valid (identity curve if no user adjustment).
+    pixel.r = SampleLUT(LUT_RGB, saturate(pixel.r));
+    pixel.g = SampleLUT(LUT_RGB, saturate(pixel.g));
+    pixel.b = SampleLUT(LUT_RGB, saturate(pixel.b));
 
-    // Then per-channel curves
-    if (cb_has_r) pixel.r = SampleLUT(LUT_R, pixel.r);
-    if (cb_has_g) pixel.g = SampleLUT(LUT_G, pixel.g);
-    if (cb_has_b) pixel.b = SampleLUT(LUT_B, pixel.b);
+    pixel.r = SampleLUT(LUT_R, saturate(pixel.r));
+    pixel.g = SampleLUT(LUT_G, saturate(pixel.g));
+    pixel.b = SampleLUT(LUT_B, saturate(pixel.b));
 
     Output[dtid.xy] = pixel;
 }

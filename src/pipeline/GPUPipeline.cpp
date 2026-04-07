@@ -47,6 +47,20 @@ bool GPUPipeline::initialize(D3D11Context& ctx)
         return false;
     }
 
+    // Create linear sampler for LUT sampling
+    {
+        D3D11_SAMPLER_DESC sd{};
+        sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        HRESULT hr = device->CreateSamplerState(&sd, &linear_sampler_);
+        if (FAILED(hr)) {
+            VEGA_LOG_ERROR("GPUPipeline: failed to create sampler state");
+            return false;
+        }
+    }
+
     // Create curve LUT textures
     createCurveLUTs();
 
@@ -376,6 +390,10 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
     // ──────────────────────────────────────────────────────────────────────
     if (tone_curve_shader_.isValid()) {
         updateCurveLUTs(recipe);
+
+        // Bind linear sampler at s0 for LUT sampling
+        ID3D11SamplerState* samplers[] = { linear_sampler_.Get() };
+        dc->CSSetSamplers(0, 1, samplers);
 
         ID3D11ShaderResourceView* srvs[5] = {
             tex_a.srv.Get(),

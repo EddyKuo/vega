@@ -6,6 +6,7 @@
 
 #include "common.hlsli"
 
+// Must match GPUPipeline::WBExposureCB layout exactly
 cbuffer Params : register(b0)
 {
     float cb_wb_r;          // white balance red multiplier
@@ -16,12 +17,21 @@ cbuffer Params : register(b0)
     float cb_contrast;      // contrast [-100, 100]
     float cb_highlights;    // highlights [-100, 100]
     float cb_shadows;       // shadows [-100, 100]
-    uint  cb_width;
+    float cb_whites;        // whites [-100, 100]
 
-    uint  cb_height;
-    float _pad0;
+    float cb_blacks;        // blacks [-100, 100]
     float _pad1;
     float _pad2;
+    float _pad3;
+};
+
+// Dimensions from slot b2 (shared across all shaders)
+cbuffer Dimensions : register(b2)
+{
+    uint cb_src_width;
+    uint cb_src_height;
+    uint cb_dst_width;
+    uint cb_dst_height;
 };
 
 Texture2D<float4>   Input  : register(t0);
@@ -89,7 +99,7 @@ float ShadowsCurve(float lum, float amount)
 [numthreads(16, 16, 1)]
 void CSMain(uint3 dtid : SV_DispatchThreadID)
 {
-    if (dtid.x >= cb_width || dtid.y >= cb_height)
+    if (dtid.x >= cb_dst_width || dtid.y >= cb_dst_height)
         return;
 
     float4 pixel = Input.Load(int3(dtid.xy, 0));
@@ -118,6 +128,26 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
             mul *= ShadowsCurve(lum, cb_shadows);
 
         pixel.rgb *= mul;
+    }
+
+    // --- Whites (bright end) ---
+    if (abs(cb_whites) > 0.5f)
+    {
+        float lum2 = Luminance(pixel.rgb);
+        float mask = saturate((lum2 - 0.5f) * 2.0f);
+        mask = mask * mask * mask;
+        float adj = 1.0f + (cb_whites / 100.0f) * mask * 1.0f;
+        pixel.rgb *= adj;
+    }
+
+    // --- Blacks (dark end) ---
+    if (abs(cb_blacks) > 0.5f)
+    {
+        float lum3 = Luminance(pixel.rgb);
+        float mask = saturate(1.0f - lum3 * 8.0f);
+        mask = mask * mask * mask;
+        float adj = 1.0f + (cb_blacks / 100.0f) * mask * 1.0f;
+        pixel.rgb *= adj;
     }
 
     // --- Contrast ---

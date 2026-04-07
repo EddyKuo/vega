@@ -6,25 +6,31 @@
 
 #include "common.hlsli"
 
-cbuffer Params : register(b0)
+// Must match GPUPipeline::HSLCB at slot b1
+cbuffer Params : register(b1)
 {
-    // 8-channel hue shifts (slider units, added directly to hue in degrees)
     float4 cb_hsl_hue_0123;     // R, O, Y, G
     float4 cb_hsl_hue_4567;     // Aqua, B, Purple, Magenta
 
-    // 8-channel saturation shifts [-100, 100]
     float4 cb_hsl_sat_0123;
     float4 cb_hsl_sat_4567;
 
-    // 8-channel luminance shifts [-100, 100]
     float4 cb_hsl_lum_0123;
     float4 cb_hsl_lum_4567;
 
-    // Global adjustments
-    float cb_vibrance;      // [-100, 100]
-    float cb_saturation;    // [-100, 100]
-    uint  cb_width;
-    uint  cb_height;
+    float cb_vibrance;
+    float cb_saturation;
+    float _pad1;
+    float _pad2;
+};
+
+// Dimensions from slot b2 (shared)
+cbuffer Dimensions : register(b2)
+{
+    uint cb_src_width;
+    uint cb_src_height;
+    uint cb_dst_width;
+    uint cb_dst_height;
 };
 
 Texture2D<float4>   Input  : register(t0);
@@ -66,7 +72,7 @@ float GetLum(int i) { return (i < 4) ? cb_hsl_lum_0123[i] : cb_hsl_lum_4567[i - 
 [numthreads(16, 16, 1)]
 void CSMain(uint3 dtid : SV_DispatchThreadID)
 {
-    if (dtid.x >= cb_width || dtid.y >= cb_height)
+    if (dtid.x >= cb_dst_width || dtid.y >= cb_dst_height)
         return;
 
     float4 pixel = Input.Load(int3(dtid.xy, 0));
