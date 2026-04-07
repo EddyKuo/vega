@@ -1,6 +1,7 @@
 # Build output
 out/
 build/
+dist/
 *.obj
 *.exe
 *.dll
@@ -38,7 +39,28 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Test data (large RAW files)
+# Python cache
+__pycache__/
+*.pyc
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Sample / test RAW images (large binary files)
+samples/*.CR2
+samples/*.cr3
+samples/*.arw
+samples/*.nef
+samples/*.raf
+samples/*.dng
+samples/*.orf
+samples/*.rw2
+samples/*.iiq
+samples/*.CR3
+samples/*.ARW
+samples/*.NEF
+samples/*.RAF
+samples/*.DNG
 tests/test_data/*.cr3
 tests/test_data/*.arw
 tests/test_data/*.nef
@@ -47,6 +69,9 @@ tests/test_data/*.dng
 tests/test_data/*.orf
 tests/test_data/*.rw2
 tests/test_data/*.iiq
+
+# Debug / error images
+error_img/
 
 # Third party build artifacts
 third_party/imgui/*.obj
