@@ -10,84 +10,41 @@
 
 namespace vega {
 
-// StackBlur-style single-channel blur: O(1) per pixel, triangle-weighted.
-// Operates in-place using pre-allocated tmp buffer.
-// Much better visual quality than box blur at same speed.
-static void stackBlur1D(float* __restrict data, float* __restrict tmp,
-                         uint32_t w, uint32_t h, int radius)
+// Correct separable box blur: horizontal then vertical, using shared tmp.
+static void boxBlur(float* __restrict data, float* __restrict tmp,
+                    uint32_t w, uint32_t h, int radius)
 {
     if (radius < 1) return;
-    const int div = 2 * radius + 1;
-    const float inv_sum = 1.0f / static_cast<float>((radius + 1) * (radius + 1));
+    const int ksize = 2 * radius + 1;
+    const float inv = 1.0f / ksize;
+    const int iw = static_cast<int>(w);
+    const int ih = static_cast<int>(h);
 
-    // Horizontal pass: data -> tmp
+    // Horizontal: data -> tmp (running sum)
     for (uint32_t y = 0; y < h; ++y) {
-        float* __restrict src = data + y * w;
+        const float* __restrict src = data + y * w;
         float* __restrict dst = tmp + y * w;
-
-        float stack_sum = 0, in_sum = 0, out_sum = 0;
-
-        // Pre-fill the stack
-        float first = src[0];
-        float last = src[w - 1];
-        for (int i = -radius; i <= radius; ++i) {
-            float val = src[std::clamp(i, 0, static_cast<int>(w) - 1)];
-            int weight = radius + 1 - std::abs(i);
-            stack_sum += val * weight;
-            if (i <= 0) out_sum += val;
-            if (i >= 0) in_sum += val;
-        }
-
-        for (uint32_t x = 0; x < w; ++x) {
-            dst[x] = stack_sum * inv_sum;
-
-            // Remove outgoing pixel
-            int left = static_cast<int>(x) - radius;
-            float out_val = src[std::clamp(left, 0, static_cast<int>(w) - 1)];
-            stack_sum -= out_sum;
-            out_sum -= out_val;
-
-            // Add incoming pixel
-            int right = static_cast<int>(x) + radius + 1;
-            float in_val = src[std::clamp(right, 0, static_cast<int>(w) - 1)];
-            in_sum += in_val;
-            stack_sum += in_sum;
-
-            out_sum += src[std::clamp(static_cast<int>(x) + 1, 0, static_cast<int>(w) - 1)];
-            in_sum -= src[std::clamp(static_cast<int>(x) + 1, 0, static_cast<int>(w) - 1)];
+        float sum = 0;
+        for (int x = -radius; x <= radius; ++x)
+            sum += src[std::clamp(x, 0, iw - 1)];
+        dst[0] = sum * inv;
+        for (uint32_t x = 1; x < w; ++x) {
+            sum += src[std::min(static_cast<int>(x) + radius, iw - 1)]
+                 - src[std::max(static_cast<int>(x) - radius - 1, 0)];
+            dst[x] = sum * inv;
         }
     }
 
-    // Vertical pass: tmp -> data
+    // Vertical: tmp -> data (running sum)
     for (uint32_t x = 0; x < w; ++x) {
-        float stack_sum = 0, in_sum = 0, out_sum = 0;
-
-        float first = tmp[x];
-        for (int i = -radius; i <= radius; ++i) {
-            int sy = std::clamp(i, 0, static_cast<int>(h) - 1);
-            float val = tmp[sy * w + x];
-            int weight = radius + 1 - std::abs(i);
-            stack_sum += val * weight;
-            if (i <= 0) out_sum += val;
-            if (i >= 0) in_sum += val;
-        }
-
-        for (uint32_t y = 0; y < h; ++y) {
-            data[y * w + x] = stack_sum * inv_sum;
-
-            int top = static_cast<int>(y) - radius;
-            float out_val = tmp[std::clamp(top, 0, static_cast<int>(h) - 1) * w + x];
-            stack_sum -= out_sum;
-            out_sum -= out_val;
-
-            int bot = static_cast<int>(y) + radius + 1;
-            float in_val = tmp[std::clamp(bot, 0, static_cast<int>(h) - 1) * w + x];
-            in_sum += in_val;
-            stack_sum += in_sum;
-
-            int mid = std::clamp(static_cast<int>(y) + 1, 0, static_cast<int>(h) - 1);
-            out_sum += tmp[mid * w + x];
-            in_sum -= tmp[mid * w + x];
+        float sum = 0;
+        for (int y = -radius; y <= radius; ++y)
+            sum += tmp[std::clamp(y, 0, ih - 1) * w + x];
+        data[x] = sum * inv;
+        for (uint32_t y = 1; y < h; ++y) {
+            sum += tmp[std::min(static_cast<int>(y) + radius, ih - 1) * w + x]
+                 - tmp[std::max(static_cast<int>(y) - radius - 1, 0) * w + x];
+            data[y * w + x] = sum * inv;
         }
     }
 }
@@ -107,80 +64,54 @@ void DenoiseNode::process(Tile& tile, const EditRecipe& recipe)
     const float chroma_str = recipe.denoise_color / 100.0f;
     const float detail_keep = recipe.denoise_detail / 100.0f;
 
-    // Work directly on RGB channels — skip YCbCr conversion.
-    // For color denoise, blur all 3 channels and blend.
-    // For luma denoise, compute luminance, blur it, and scale RGB.
-    std::vector<float> tmp(npix);  // shared temp for blur
+    // Shared temp buffers — allocated once
+    std::vector<float> tmp(npix);
+    std::vector<float> Y(npix), Cb(npix), Cr(npix);
 
-    if (chroma_str > 0.01f) {
-        // Color denoise: blur each RGB channel separately, blend with original
-        int radius = std::max(1, static_cast<int>(chroma_str * 2.0f + 0.5f));
-        float mix = std::clamp(chroma_str * 0.8f, 0.0f, 0.9f);
-
-        // Process each channel in-place on tile data
-        // Extract -> blur -> blend back
-        std::vector<float> chan(npix);
-
-        for (int c = 0; c < 3; ++c) {
-            // Extract channel
-            for (uint32_t y = 0; y < h; ++y) {
-                const float* row = tile.data + y * stride;
-                for (uint32_t x = 0; x < w; ++x)
-                    chan[y * w + x] = row[x * ch + c];
-            }
-
-            // Blur
-            stackBlur1D(chan.data(), tmp.data(), w, h, radius);
-
-            // Blend back
-            for (uint32_t y = 0; y < h; ++y) {
-                float* row = tile.data + y * stride;
-                for (uint32_t x = 0; x < w; ++x) {
-                    float orig = row[x * ch + c];
-                    row[x * ch + c] = orig + (chan[y * w + x] - orig) * mix;
-                }
-            }
+    // RGB -> YCbCr
+    for (uint32_t y = 0; y < h; ++y) {
+        const float* __restrict row = tile.data + y * stride;
+        for (uint32_t x = 0; x < w; ++x) {
+            const float* px = row + x * ch;
+            uint32_t i = y * w + x;
+            Y[i]  =  0.299f * px[0] + 0.587f * px[1] + 0.114f * px[2];
+            Cb[i] = -0.169f * px[0] - 0.331f * px[1] + 0.500f * px[2];
+            Cr[i] =  0.500f * px[0] - 0.419f * px[1] - 0.081f * px[2];
         }
     }
 
+    // Luma denoise: blur Y, edge-preserving blend
     if (luma_str > 0.01f) {
-        // Luma denoise: compute luminance, blur it, scale RGB to match
-        int radius = std::max(1, static_cast<int>(luma_str * 1.5f + 0.5f));
-        float mix = std::clamp(luma_str * (1.0f - detail_keep * 0.5f), 0.0f, 0.9f);
+        int radius = std::max(1, static_cast<int>(luma_str * 2.0f + 0.5f));
+        std::vector<float> Y_blur(npix);
+        std::memcpy(Y_blur.data(), Y.data(), npix * sizeof(float));
+        boxBlur(Y_blur.data(), tmp.data(), w, h, radius);
 
-        std::vector<float> lum(npix), lum_blur(npix);
-        for (uint32_t y = 0; y < h; ++y) {
-            const float* row = tile.data + y * stride;
-            for (uint32_t x = 0; x < w; ++x) {
-                const float* px = row + x * ch;
-                lum[y * w + x] = 0.2126f * px[0] + 0.7152f * px[1] + 0.0722f * px[2];
-            }
+        float base_mix = std::clamp(luma_str * (1.0f - detail_keep * 0.5f), 0.0f, 0.9f);
+        for (uint32_t i = 0; i < npix; ++i) {
+            float diff = std::abs(Y[i] - Y_blur[i]);
+            float edge = std::min(diff * 15.0f, 1.0f);
+            float mix = base_mix * (1.0f - edge * detail_keep);
+            Y[i] += (Y_blur[i] - Y[i]) * mix;
         }
+    }
 
-        std::memcpy(lum_blur.data(), lum.data(), npix * sizeof(float));
-        stackBlur1D(lum_blur.data(), tmp.data(), w, h, radius);
+    // Chroma denoise: blur Cb and Cr
+    if (chroma_str > 0.01f) {
+        int radius = std::max(1, static_cast<int>(chroma_str * 2.0f + 0.5f));
+        boxBlur(Cb.data(), tmp.data(), w, h, radius);
+        boxBlur(Cr.data(), tmp.data(), w, h, radius);
+    }
 
-        // Apply: scale RGB by blurred/original luminance ratio
-        for (uint32_t y = 0; y < h; ++y) {
-            float* row = tile.data + y * stride;
-            for (uint32_t x = 0; x < w; ++x) {
-                float* px = row + x * ch;
-                float orig_l = lum[y * w + x];
-                float blur_l = lum_blur[y * w + x];
-
-                // Edge-preserving: reduce effect where difference is large
-                float diff = std::abs(orig_l - blur_l);
-                float edge = std::min(diff * 15.0f, 1.0f);
-                float m = mix * (1.0f - edge * detail_keep);
-
-                float target_l = orig_l + (blur_l - orig_l) * m;
-                if (orig_l > 0.001f) {
-                    float ratio = target_l / orig_l;
-                    px[0] *= ratio;
-                    px[1] *= ratio;
-                    px[2] *= ratio;
-                }
-            }
+    // YCbCr -> RGB
+    for (uint32_t y = 0; y < h; ++y) {
+        float* __restrict row = tile.data + y * stride;
+        for (uint32_t x = 0; x < w; ++x) {
+            float* px = row + x * ch;
+            uint32_t i = y * w + x;
+            px[0] = Y[i] + 1.402f * Cr[i];
+            px[1] = Y[i] - 0.344f * Cb[i] - 0.714f * Cr[i];
+            px[2] = Y[i] + 1.772f * Cb[i];
         }
     }
 }
