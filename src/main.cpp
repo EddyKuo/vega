@@ -65,7 +65,20 @@ static bool g_first_frame = true;
 static double g_last_pipeline_ms = 0.0;
 static bool g_needs_full_res = false;
 static bool g_is_preview = false;
-static uint32_t g_display_w = 0, g_display_h = 0;  // actual texture dimensions
+static uint32_t g_display_w = 0, g_display_h = 0;
+
+// Background pipeline thread
+#include <thread>
+#include <mutex>
+#include <atomic>
+static std::mutex g_bg_mutex;
+static std::vector<uint8_t> g_bg_result;         // background thread writes here
+static uint32_t g_bg_w = 0, g_bg_h = 0;
+static std::atomic<bool> g_bg_ready{false};       // set by bg thread when done
+static std::atomic<bool> g_bg_running{false};     // bg thread is active
+static std::atomic<bool> g_bg_cancel{false};      // request bg thread to stop
+static vega::Pipeline g_bg_pipeline;              // separate pipeline for bg thread
+static double g_bg_pipeline_ms = 0.0;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
     HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -119,23 +132,45 @@ static void uploadToGPU(const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h
         g_ctx.device()->CreateShaderResourceView(tex.Get(), nullptr, &srv);
 }
 
-// Full resolution processing
-static void reprocessFull()
+// Launch full-res processing on background thread
+static void launchBackgroundProcess()
 {
-    if (!g_has_image) return;
-    vega::Timer timer;
-    const auto& rgba = g_pipeline.process(g_raw_image, g_recipe);
-    g_rgba_ptr = &rgba;
-    g_last_pipeline_ms = timer.elapsed_ms();
-    g_display_w = g_raw_image.width;
-    g_display_h = g_raw_image.height;
-    g_is_preview = false;
-    g_needs_full_res = false;
-    uploadToGPU(rgba, g_display_w, g_display_h, g_image_tex, g_image_srv);
-    g_histogram.compute(rgba.data(), g_display_w, g_display_h);
+    // Cancel any running bg work
+    g_bg_cancel = true;
+
+    // Wait briefly if bg thread is still running
+    for (int i = 0; i < 50 && g_bg_running; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    g_bg_cancel = false;
+    g_bg_running = true;
+    g_bg_ready = false;
+
+    // Capture recipe by value for the thread
+    vega::EditRecipe recipe_copy = g_recipe;
+
+    std::thread([recipe_copy]() {
+        vega::Timer timer;
+        const auto& rgba = g_bg_pipeline.process(g_raw_image, recipe_copy);
+
+        if (g_bg_cancel) {
+            g_bg_running = false;
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_bg_mutex);
+            g_bg_result.assign(rgba.begin(), rgba.end());
+            g_bg_w = g_raw_image.width;
+            g_bg_h = g_raw_image.height;
+            g_bg_pipeline_ms = timer.elapsed_ms();
+        }
+        g_bg_ready = true;
+        g_bg_running = false;
+    }).detach();
 }
 
-// Preview resolution (1/4) for interactive slider dragging
+// Preview on UI thread (fast, 1/4 res)
 static void reprocessPreview()
 {
     if (!g_has_image) return;
@@ -147,19 +182,38 @@ static void reprocessPreview()
     g_display_w = pw;
     g_display_h = ph;
     g_is_preview = true;
-    g_needs_full_res = true;
     uploadToGPU(rgba, pw, ph, g_image_tex, g_image_srv);
     g_histogram.compute(rgba.data(), pw, ph);
 }
 
-// Called by DevelopPanel when slider changes — use preview during drag
+// Called when slider changes
 static void reprocessPipeline()
 {
     if (!g_has_image) return;
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
-        reprocessPreview();   // dragging — fast preview
-    else
-        reprocessFull();      // not dragging — full res
+
+    // Always show preview immediately (non-blocking)
+    reprocessPreview();
+
+    // Queue full-res in background
+    g_needs_full_res = true;
+    launchBackgroundProcess();
+}
+
+// Check if background result is ready and upload it (call every frame)
+static void pollBackgroundResult()
+{
+    if (!g_bg_ready) return;
+
+    std::lock_guard<std::mutex> lock(g_bg_mutex);
+    g_last_pipeline_ms = g_bg_pipeline_ms;
+    g_display_w = g_bg_w;
+    g_display_h = g_bg_h;
+    g_is_preview = false;
+    g_needs_full_res = false;
+    g_rgba_ptr = &g_bg_result;
+    uploadToGPU(g_bg_result, g_bg_w, g_bg_h, g_image_tex, g_image_srv);
+    g_histogram.compute(g_bg_result.data(), g_bg_w, g_bg_h);
+    g_bg_ready = false;
 }
 
 static void generateBeforeImage()
@@ -574,10 +628,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // Deferred full-res: when mouse released after preview drag
-        if (g_needs_full_res && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            reprocessFull();
-        }
+        // Poll background pipeline result
+        pollBackgroundResult();
 
         // Menu bar
         renderMenuBar();
