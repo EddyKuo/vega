@@ -1,49 +1,78 @@
 # Vega - RAW 照片編輯器
 
-Vega 是一款 Windows 原生的 RAW 照片編輯器，以 C++20 和 DirectX 11 打造，提供非破壞性的影像處理管線（Non-Destructive Editing Pipeline），支援即時預覽與 GPU 加速。
+Vega 是一款 Windows 原生的 RAW 照片編輯器，以 C++20 和 DirectX 11 打造，提供非破壞性的影像處理管線（Non-Destructive Editing Pipeline），支援即時預覽與 GPU 加速。設計靈感來自 Adobe Lightroom，具備照片庫管理與單張沖洗兩種工作模式。
 
-專案代號取自天琴座 α 星（Vega）— 天文測光系統的零點參考星。
+專案代號取自天琴座 a 星（Vega）— 天文測光系統的零點參考星。
 
 ## 功能特色
 
-### 影像處理
-- 支援主流 RAW 格式：Canon CR2/CR3、Sony ARW、Nikon NEF、Fuji RAF、Adobe DNG 等
-- 白平衡調整（色溫 / 色調 / 吸管取樣）
+### 照片庫管理（Library Mode）
+- 資料夾匯入：選擇本機資料夾，背景遞迴掃描所有 RAW 檔案並匯入
+- 縮圖網格瀏覽：從 RAW 內嵌 JPEG 自動產生縮圖，支援虛擬捲動（上千張不卡頓）
+- 照片管理：星級評分（1-5 星）、色彩標籤（6 色）、旗標（Pick / Reject）
+- 篩選與搜尋：依評分、色彩標籤、旗標、相機型號、日期範圍過濾
+- 雙擊縮圖直接進入 Develop 模式編輯
+- SQLite 資料庫持久化，重啟後自動載入已匯入的照片庫
+- 多資料夾支援，各資料夾顯示 RAW 檔案數量
+- 路徑去重（同一檔案不會重複匯入）
+
+### 影像處理（Develop Mode）
+- 支援主流 RAW 格式：Canon CR2/CR3、Sony ARW、Nikon NEF、Fuji RAF、Adobe DNG、Olympus ORF、Panasonic RW2、Pentax PEF 等
+- 白平衡調整（色溫 2000-12000K / 色調 / 吸管取樣）
 - 曝光度、對比、亮部、暗部、白色、黑色 六軸色調控制
-- 色調曲線編輯器（RGB 主通道 + 個別 R/G/B 通道，可拖拽控制點）
-- HSL 8 通道獨立調整（紅/橙/黃/綠/水/藍/紫/洋紅）
+- 色調曲線編輯器（RGB 主通道 + 個別 R/G/B 通道，可拖拽控制點，單調三次樣條）
+- HSL 8 通道獨立調整（紅/橙/黃/綠/水/藍/紫/洋紅 x 色相/飽和度/明度）
 - 自然飽和度 / 飽和度
 - 銳利化（Unsharp Mask，可調總量/半徑/細節/遮罩）
-- 降噪（YCbCr 空間分離處理，亮度/色彩/細節獨立控制）
+- 降噪（YCbCr 空間分離處理，亮度/色彩/細節獨立控制，邊緣保留）
 - sRGB gamma 輸出
 
 ### GPU 加速
 - 7 個 HLSL Compute Shader（cs_5_0）
-- 6-pass GPU 處理管線：WB+曝光 → 色調曲線 → HSL → 降噪 → 銳化 → Gamma
+- 6-pass GPU 處理管線：WB+曝光 -> 色調曲線 -> HSL -> 降噪 -> 銳化 -> Gamma
 - RTX 3090 上全解析度處理 < 50ms
 - 自動 CPU fallback（GPU 不可用時無縫切換）
 
 ### 使用介面
-- ImGui (Docking branch) 建構的專業暗色介面
-- 中文 / 英文雙語切換
+- ImGui 1.92 (Docking) 建構的專業暗色介面
+- Library / Develop 雙模式切換（按 G / D 或工具列按鈕）
+- 中文 / 英文雙語即時切換
 - 即時直方圖（R/G/B/亮度，對數刻度，過曝/欠曝警告）
 - Pan / Zoom 影像瀏覽（滑鼠左鍵拖拉、滾輪縮放、F 適配、1/2 倍率）
-- 前後對比（並排 / 分割 / 切換三種模式）
-- Undo / Redo（最多 200 步）
+- 前後對比（並排 / 分割 / 切換三種模式，按 B 開關）
+- Undo / Redo（最多 200 步，全操作可回溯）
 - .vgr 設定檔（JSON 格式，自動儲存/載入）
 - 漸進式預覽（拖拽時 1/8 解析度即時回應，放開後背景 thread 補全解析度）
+- 可調整縮圖大小（80px - 400px）
 
 ### 匯出
-- JPEG（可調品質）、PNG 8-bit、TIFF 8/16-bit
-- 可調整輸出尺寸（長邊/短邊/百分比）
+- JPEG（可調品質 1-100）、PNG 8-bit、TIFF 8/16-bit
+- 可調整輸出尺寸（原始大小/長邊/短邊/百分比）
+- ICC Profile 嵌入
+- EXIF 保留（可選擇移除 GPS）
+- 輸出檔名模板
 - 非同步匯出（不阻塞 UI）
 
 ### 系統整合
-- 視窗位置 / 大小記憶（%APPDATA%/Vega/settings.json）
+- 視窗位置 / 大小 / 最大化狀態記憶（%APPDATA%/Vega/settings.json）
+- 照片庫資料夾清單持久化（重啟後自動恢復）
 - Windows 暗色標題列
-- 檔案拖放開啟
+- 檔案拖放開啟 RAW 檔
 - 高 DPI 支援（Per-Monitor DPI Aware V2）
 - Crash handler（MiniDump 自動產生）
+- 日誌記錄（vega.log）
+
+## 工作流程
+
+1. 啟動 Vega，預設進入 **Library 模式**
+2. 點選左側 **「+ 新增資料夾」** 選擇存放 RAW 檔的資料夾
+3. 背景自動掃描並匯入所有 RAW 檔案，產生縮圖
+4. 在網格中瀏覽照片，可設定星級、色彩標籤、旗標進行篩選
+5. **雙擊**縮圖進入 **Develop 模式** 開始編輯
+6. 調整白平衡、曝光、色調曲線、HSL 等參數，即時預覽效果
+7. 編輯參數自動儲存為 `.vgr` sidecar 檔案（非破壞性）
+8. 按 **Ctrl+Shift+E** 匯出為 JPEG / PNG / TIFF
+9. 按 **G** 回到 Library 模式繼續瀏覽其他照片
 
 ## 系統需求
 
@@ -153,13 +182,14 @@ vega/
 │   │   ├── HistogramView.h/.cpp    # 即時直方圖
 │   │   ├── BeforeAfter.h/.cpp      # 前後對比分割視圖
 │   │   ├── ExportDialog.h/.cpp     # 匯出設定對話框
-│   │   ├── GridView.h/.cpp         # 照片縮圖網格
+│   │   ├── GridView.h/.cpp         # 照片縮圖網格（虛擬捲動）
+│   │   ├── FolderPanel.h/.cpp      # 資料夾管理面板
 │   │   ├── Toolbar.h/.cpp          # 上方工具列
 │   │   └── StatusBar.h/.cpp        # 底部狀態列
 │   ├── catalog/                    # 照片管理（DAM）
-│   │   ├── Database.h/.cpp         # SQLite + FTS5
-│   │   ├── ThumbnailCache.h/.cpp   # 多解析度縮圖快取
-│   │   └── ImportManager.h/.cpp    # 匯入工作流程
+│   │   ├── Database.h/.cpp         # SQLite 資料庫（FTS5 可選）
+│   │   ├── ThumbnailCache.h/.cpp   # 多解析度縮圖快取（WIC 解碼）
+│   │   └── ImportManager.h/.cpp    # 背景匯入工作流程
 │   └── export/                     # 輸出模組
 │       └── ExportManager.h/.cpp    # JPEG/PNG/TIFF 匯出
 ├── shaders/                        # HLSL Compute Shaders
@@ -210,9 +240,19 @@ vega/
 
 ## 快捷鍵
 
+### 全域
+
 | 快捷鍵 | 功能 |
 |--------|------|
 | Ctrl+O | 開啟 RAW 檔 |
+| Ctrl+Shift+I | 新增資料夾（匯入） |
+| G | 切換至 Library 模式 |
+| D | 切換至 Develop 模式 |
+
+### Develop 模式
+
+| 快捷鍵 | 功能 |
+|--------|------|
 | Ctrl+S | 儲存 .vgr 設定 |
 | Ctrl+Shift+E | 匯出 |
 | Ctrl+Z / Ctrl+Y | 復原 / 重做 |
@@ -223,14 +263,22 @@ vega/
 | M | 切換對比模式 |
 | 左鍵拖拉 | 平移照片 |
 | 滾輪 | 縮放（以滑鼠為中心） |
-| 雙擊 | 適配視窗 |
 
-## 檔案格式
+### Library 模式
 
-| 副檔名 | 用途 | 格式 |
-|--------|------|------|
-| .vgr | Vega Recipe（編輯參數） | UTF-8 JSON |
-| .vegacat | Vega Catalog（照片資料庫） | SQLite 3 |
+| 快捷鍵 | 功能 |
+|--------|------|
+| 雙擊縮圖 | 開啟該照片進入 Develop 模式 |
+| 右鍵資料夾 | 移除資料夾 |
+
+## 資料儲存
+
+| 路徑 | 用途 | 格式 |
+|------|------|------|
+| `%APPDATA%/Vega/settings.json` | 應用程式設定、資料夾清單 | JSON |
+| `%APPDATA%/Vega/catalog.db` | 照片資料庫（元資料、評分、標籤） | SQLite 3 |
+| `%APPDATA%/Vega/thumbnails/` | 縮圖快取（按 UUID 分目錄） | JPEG |
+| `<RAW檔同目錄>/<檔名>.vgr` | 編輯參數（sidecar） | UTF-8 JSON |
 
 ## 授權
 
