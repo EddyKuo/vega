@@ -43,8 +43,8 @@ Desktop.ini
 __pycache__/
 *.pyc
 
-# Claude Code local settings
-.claude/settings.local.json
+# Claude Code
+.claude/
 
 # Sample / test RAW images (large binary files)
 samples/*.CR2
