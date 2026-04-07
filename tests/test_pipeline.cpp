@@ -361,3 +361,158 @@ TEST_CASE("RawDecoder returns error for invalid file", "[raw][error]")
 
     fs::remove(test_file);
 }
+
+// ---------- Preview pipeline ----------
+
+TEST_CASE("processPreview produces smaller valid output", "[pipeline][preview]")
+{
+    if (!hasSample()) { SKIP("Sample RAW not found"); }
+
+    vega::Logger::init();
+
+    auto result = vega::RawDecoder::decode(SAMPLE_CR2);
+    REQUIRE(result.is_ok());
+
+    vega::Pipeline pipeline;
+    vega::EditRecipe recipe;
+    recipe.exposure = 0.5f;
+
+    uint32_t pw = 0, ph = 0;
+    const auto& rgba = pipeline.processPreview(result.value(), recipe, 4, pw, ph);
+
+    uint32_t expected_w = result.value().width / 4;
+    uint32_t expected_h = result.value().height / 4;
+
+    CHECK(pw == expected_w);
+    CHECK(ph == expected_h);
+    REQUIRE(rgba.size() == static_cast<size_t>(pw) * ph * 4);
+
+    // Not all black
+    uint64_t sum = 0;
+    for (size_t i = 0; i < std::min<size_t>(rgba.size(), 4000); i += 4)
+        sum += rgba[i] + rgba[i+1] + rgba[i+2];
+    CHECK(sum > 0);
+
+    INFO("Preview: " << pw << "x" << ph);
+}
+
+TEST_CASE("processPreview is faster than full process", "[pipeline][preview][perf]")
+{
+    if (!hasSample()) { SKIP("Sample RAW not found"); }
+
+    vega::Logger::init();
+
+    auto result = vega::RawDecoder::decode(SAMPLE_CR2);
+    REQUIRE(result.is_ok());
+
+    vega::Pipeline pipeline;
+    vega::EditRecipe recipe;
+    recipe.exposure = 1.0f;
+    recipe.contrast = 20.0f;
+
+    // Warm up demosaic cache
+    pipeline.process(result.value(), recipe);
+
+    // Benchmark full
+    vega::Timer t_full;
+    pipeline.process(result.value(), recipe);
+    double ms_full = t_full.elapsed_ms();
+
+    // Benchmark preview
+    uint32_t pw, ph;
+    vega::Timer t_prev;
+    pipeline.processPreview(result.value(), recipe, 4, pw, ph);
+    double ms_prev = t_prev.elapsed_ms();
+
+    CHECK(ms_prev < ms_full);
+
+    INFO("Full: " << ms_full << "ms, Preview 1/4: " << ms_prev << "ms, Speedup: " << ms_full / ms_prev << "x");
+}
+
+TEST_CASE("Two Pipeline instances produce same output", "[pipeline][thread-safety]")
+{
+    if (!hasSample()) { SKIP("Sample RAW not found"); }
+
+    vega::Logger::init();
+
+    auto result = vega::RawDecoder::decode(SAMPLE_CR2);
+    REQUIRE(result.is_ok());
+
+    vega::EditRecipe recipe;
+    recipe.exposure = 1.5f;
+    recipe.highlights = -30.0f;
+
+    // Simulate main thread + background thread using separate Pipeline instances
+    vega::Pipeline pipeline_a;
+    vega::Pipeline pipeline_b;
+
+    const auto& rgba_a = pipeline_a.process(result.value(), recipe);
+    const auto& rgba_b = pipeline_b.process(result.value(), recipe);
+
+    REQUIRE(rgba_a.size() == rgba_b.size());
+    REQUIRE(rgba_a.size() > 0);
+
+    // Compare first 10000 pixels — should be identical
+    size_t mismatches = 0;
+    size_t check_count = std::min<size_t>(rgba_a.size(), 40000);
+    for (size_t i = 0; i < check_count; ++i) {
+        if (rgba_a[i] != rgba_b[i])
+            mismatches++;
+    }
+
+    CHECK(mismatches == 0);
+    INFO("Checked " << check_count << " bytes, mismatches: " << mismatches);
+}
+
+TEST_CASE("Background thread pipeline concurrent with preview", "[pipeline][thread-safety]")
+{
+    if (!hasSample()) { SKIP("Sample RAW not found"); }
+
+    vega::Logger::init();
+
+    auto result = vega::RawDecoder::decode(SAMPLE_CR2);
+    REQUIRE(result.is_ok());
+
+    vega::EditRecipe recipe;
+    recipe.exposure = 1.0f;
+
+    vega::Pipeline preview_pipeline;
+    vega::Pipeline bg_pipeline;
+
+    // Run both concurrently (simulates the actual usage in main.cpp)
+    std::vector<uint8_t> bg_result;
+    uint32_t bg_w = 0, bg_h = 0;
+    bool bg_done = false;
+
+    std::thread bg_thread([&]() {
+        const auto& rgba = bg_pipeline.process(result.value(), recipe);
+        bg_result.assign(rgba.begin(), rgba.end());
+        bg_w = result.value().width;
+        bg_h = result.value().height;
+        bg_done = true;
+    });
+
+    // Meanwhile, run preview on "main thread"
+    uint32_t pw, ph;
+    const auto& preview = preview_pipeline.processPreview(result.value(), recipe, 4, pw, ph);
+
+    CHECK(preview.size() > 0);
+    CHECK(pw == result.value().width / 4);
+
+    bg_thread.join();
+
+    CHECK(bg_done);
+    CHECK(bg_result.size() == static_cast<size_t>(bg_w) * bg_h * 4);
+
+    // Both outputs should be valid (not all zeros)
+    uint64_t sum_preview = 0, sum_full = 0;
+    for (size_t i = 0; i < std::min<size_t>(preview.size(), 4000); i += 4)
+        sum_preview += preview[i];
+    for (size_t i = 0; i < std::min<size_t>(bg_result.size(), 4000); i += 4)
+        sum_full += bg_result[i];
+
+    CHECK(sum_preview > 0);
+    CHECK(sum_full > 0);
+
+    INFO("Preview " << pw << "x" << ph << " OK, Full " << bg_w << "x" << bg_h << " OK");
+}
