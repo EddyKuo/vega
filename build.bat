@@ -50,7 +50,14 @@ if "%BUILD_TYPE%"=="release" (
     where upx >nul 2>&1
     if !errorlevel! equ 0 (
         echo [5/5] Compressing with UPX...
-        upx --best --lzma out\build\windows-x64-release\src\vega.exe 2>nul
+        for %%f in (out\build\windows-x64-release\src\vega.exe out\build\windows-x64-release\src\*.dll) do (
+            upx -t "%%f" >nul 2>&1
+            if !errorlevel! neq 0 (
+                upx --best --lzma "%%f" 2>nul
+            ) else (
+                echo     %%~nxf already packed, skipping
+            )
+        )
     ) else (
         echo [5/5] UPX not found, skipping compression
     )
