@@ -8,12 +8,13 @@ Vega 是一款 Windows 原生的 RAW 照片編輯器，以 C++20 和 DirectX 11 
 
 ### 照片庫管理（Library Mode）
 - 資料夾匯入：選擇本機資料夾，背景遞迴掃描所有 RAW 檔案並匯入
-- 縮圖網格瀏覽：從 RAW 內嵌 JPEG 自動產生縮圖，支援虛擬捲動（上千張不卡頓）
+- 縮圖網格瀏覽：從 RAW 內嵌 JPEG 自動產生縮圖，支援 EXIF 方向自動旋轉，虛擬捲動（上千張不卡頓）
 - 照片管理：星級評分（1-5 星）、色彩標籤（6 色）、旗標（Pick / Reject）
 - 篩選與搜尋：依評分、色彩標籤、旗標、相機型號、日期範圍過濾
 - 雙擊縮圖直接進入 Develop 模式編輯
-- SQLite 資料庫持久化，重啟後自動載入已匯入的照片庫
-- 多資料夾支援，各資料夾顯示 RAW 檔案數量
+- SQLite 資料庫持久化（含縮圖 BLOB），重啟後自動載入已匯入的照片庫
+- 多資料夾支援，各資料夾顯示 RAW 檔案數量，點選資料夾僅顯示該資料夾照片
+- 記憶上次選取的資料夾，重啟後自動恢復
 - 路徑去重（同一檔案不會重複匯入）
 
 ### 影像處理（Develop Mode）
@@ -28,10 +29,11 @@ Vega 是一款 Windows 原生的 RAW 照片編輯器，以 C++20 和 DirectX 11 
 - sRGB gamma 輸出
 
 ### GPU 加速
-- 7 個 HLSL Compute Shader（cs_5_0）
+- 7 個 HLSL Compute Shader（cs_5_0），Build time 預編譯為 CSO bytecode
 - 6-pass GPU 處理管線：WB+曝光 -> 色調曲線 -> HSL -> 降噪 -> 銳化 -> Gamma
 - RTX 3090 上全解析度處理 < 50ms
 - 自動 CPU fallback（GPU 不可用時無縫切換）
+- Release 發佈不含 HLSL 原始碼，僅帶預編譯 .cso
 
 ### 使用介面
 - ImGui 1.92 (Docking) 建構的專業暗色介面
@@ -172,7 +174,7 @@ vega/
 │   │       └── FastMath.h           # fast_exp, gamma LUT, forceinline
 │   ├── gpu/                        # D3D11 基礎設施
 │   │   ├── D3D11Context.h/.cpp     # Device, SwapChain, RTV
-│   │   ├── ComputeShader.h/.cpp    # HLSL 編譯 / CSO 載入
+│   │   ├── ComputeShader.h/.cpp    # CSO 載入 / HLSL 即時編譯（Debug）
 │   │   ├── TexturePool.h/.cpp      # GPU texture 記憶體池
 │   │   ├── ConstantBuffer.h        # 泛型 Constant Buffer
 │   │   └── GPUTimer.h/.cpp         # D3D11 timestamp query
@@ -187,12 +189,12 @@ vega/
 │   │   ├── Toolbar.h/.cpp          # 上方工具列
 │   │   └── StatusBar.h/.cpp        # 底部狀態列
 │   ├── catalog/                    # 照片管理（DAM）
-│   │   ├── Database.h/.cpp         # SQLite 資料庫（FTS5 可選）
-│   │   ├── ThumbnailCache.h/.cpp   # 多解析度縮圖快取（WIC 解碼）
+│   │   ├── Database.h/.cpp         # SQLite 資料庫（FTS5 + 縮圖 BLOB）
+│   │   ├── ThumbnailCache.h/.cpp   # DB-backed 縮圖快取（WIC 解碼 + EXIF 旋轉）
 │   │   └── ImportManager.h/.cpp    # 背景匯入工作流程
 │   └── export/                     # 輸出模組
 │       └── ExportManager.h/.cpp    # JPEG/PNG/TIFF 匯出
-├── shaders/                        # HLSL Compute Shaders
+├── shaders/                        # HLSL Compute Shaders（Build time 編譯為 .cso）
 │   ├── common.hlsli                # 共用函式（LinearToSRGB, RGBToHSL...）
 │   ├── white_balance_exposure.hlsl # WB + 曝光 + 對比 + 亮暗部
 │   ├── tone_curve.hlsl             # 1D LUT 色調曲線
@@ -275,9 +277,8 @@ vega/
 
 | 路徑 | 用途 | 格式 |
 |------|------|------|
-| `%APPDATA%/Vega/settings.json` | 應用程式設定、資料夾清單 | JSON |
-| `%APPDATA%/Vega/catalog.db` | 照片資料庫（元資料、評分、標籤） | SQLite 3 |
-| `%APPDATA%/Vega/thumbnails/` | 縮圖快取（按 UUID 分目錄） | JPEG |
+| `%APPDATA%/Vega/settings.json` | 應用程式設定、資料夾清單、上次選取資料夾 | JSON |
+| `<exe同目錄>/catalog.db` | 照片資料庫（元資料、評分、標籤、縮圖 BLOB） | SQLite 3 |
 | `<RAW檔同目錄>/<檔名>.vgr` | 編輯參數（sidecar） | UTF-8 JSON |
 
 ## 授權
