@@ -29,7 +29,6 @@ find_library(DXGI_LIB dxgi)
 # ── HLSL Shader Compiler (fxc.exe) ──
 find_program(FXC_EXECUTABLE fxc
     HINTS "$ENV{WindowsSdkDir}/bin/$ENV{WindowsSDKVersion}/x64"
-    PATHS "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
 )
 if(NOT FXC_EXECUTABLE)
     message(WARNING "fxc.exe not found -- shaders will not be precompiled")
