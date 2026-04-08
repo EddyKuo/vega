@@ -39,7 +39,8 @@ void GridView::render(Database& db, ThumbnailCache& cache)
                           !filter_.lens_model.empty() ||
                           !filter_.date_from.empty() ||
                           !filter_.date_to.empty() ||
-                          !filter_.search_text.empty();
+                          !filter_.search_text.empty() ||
+                          !filter_.folder_path.empty();
 
         if (has_filter) {
             visible_photos_ = db.filter(filter_);
@@ -182,7 +183,8 @@ void GridView::renderPhotoCell(const PhotoRecord& photo, ThumbnailCache& cache,
     ID3D11ShaderResourceView* srv = cache.getThumbnail(
         photo.uuid,
         std::filesystem::path(photo.file_path),
-        ThumbnailCache::Level::Small);
+        ThumbnailCache::Level::Small,
+        photo.orientation);
 
     ImVec2 thumb_pos = ImVec2(cursor.x + 4.0f, cursor.y + 4.0f);
     float thumb_draw_size = cell_size - 8.0f;

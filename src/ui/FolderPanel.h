@@ -25,6 +25,7 @@ public:
 
     const std::vector<FolderEntry>& folders() const { return folders_; }
     int selectedIndex() const { return selected_idx_; }
+    bool selectByPath(const std::filesystem::path& path);
     void updateRawCount(int index, int count);
     void setImporting(int index, bool importing);
 
