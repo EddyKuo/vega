@@ -15,6 +15,7 @@
 #include "core/Timer.h"
 #include "core/CrashHandler.h"
 #include "core/Settings.h"
+#include "core/UIStateDB.h"
 #include "core/WindowsIntegration.h"
 #include "gpu/D3D11Context.h"
 #include "raw/RawDecoder.h"
@@ -60,6 +61,7 @@ static vega::ExportDialog g_export_dialog;
 static vega::Toolbar g_toolbar;
 static vega::StatusBar g_status_bar;
 static vega::AppSettings g_settings;
+static vega::UIStateDB g_ui_db;
 
 // Library mode
 static vega::GridView g_grid_view;
@@ -71,6 +73,82 @@ static vega::ThumbnailCache g_thumb_cache;
 static std::atomic<bool> g_import_running{false};
 static vega::ImportManager::ImportProgress g_import_progress;
 static std::mutex g_import_mutex;
+
+// ---------------------------------------------------------------------------
+// Load/save app settings from UIStateDB
+// ---------------------------------------------------------------------------
+static void loadSettingsFromDB()
+{
+    g_settings.window_x   = g_ui_db.getInt("window_x", 100);
+    g_settings.window_y   = g_ui_db.getInt("window_y", 100);
+    g_settings.window_w   = g_ui_db.getInt("window_w", 1920);
+    g_settings.window_h   = g_ui_db.getInt("window_h", 1080);
+    g_settings.maximized  = g_ui_db.getBool("maximized", true);
+    g_settings.ui_scale   = g_ui_db.getFloat("ui_scale", 1.0f);
+    g_settings.dark_theme = g_ui_db.getBool("dark_theme", true);
+    g_settings.language   = g_ui_db.get("language").value_or("en");
+    g_settings.use_gpu    = g_ui_db.getBool("use_gpu", true);
+    g_settings.preview_quality = g_ui_db.getInt("preview_quality", 2);
+    g_settings.last_open_dir   = g_ui_db.get("last_open_dir").value_or("");
+    g_settings.last_export_dir = g_ui_db.get("last_export_dir").value_or("");
+    g_settings.catalog_path    = g_ui_db.get("catalog_path").value_or("");
+    g_settings.selected_folder = g_ui_db.get("selected_folder").value_or("");
+
+    // Restore library folders list (stored as comma-separated or individual keys)
+    g_settings.library_folders.clear();
+    int folder_count = g_ui_db.getInt("library_folder_count", 0);
+    for (int i = 0; i < folder_count; ++i) {
+        auto val = g_ui_db.get("library_folder_" + std::to_string(i));
+        if (val && !val->empty())
+            g_settings.library_folders.push_back(*val);
+    }
+
+    // Validate window geometry
+    if (g_settings.window_w < 200 || g_settings.window_h < 200 ||
+        g_settings.window_w > 8192 || g_settings.window_h > 8192 ||
+        g_settings.window_x < -4096 || g_settings.window_x > 8192 ||
+        g_settings.window_y < -4096 || g_settings.window_y > 8192)
+    {
+        g_settings.window_x = 100; g_settings.window_y = 100;
+        g_settings.window_w = 1920; g_settings.window_h = 1080;
+        g_settings.maximized = true;
+    }
+}
+
+static void saveSettingsToDB()
+{
+    g_ui_db.setInt("window_x", g_settings.window_x);
+    g_ui_db.setInt("window_y", g_settings.window_y);
+    g_ui_db.setInt("window_w", g_settings.window_w);
+    g_ui_db.setInt("window_h", g_settings.window_h);
+    g_ui_db.setBool("maximized", g_settings.maximized);
+    g_ui_db.setFloat("ui_scale", g_settings.ui_scale);
+    g_ui_db.setBool("dark_theme", g_settings.dark_theme);
+    g_ui_db.set("language", g_settings.language);
+    g_ui_db.setBool("use_gpu", g_settings.use_gpu);
+    g_ui_db.setInt("preview_quality", g_settings.preview_quality);
+    g_ui_db.set("last_open_dir", g_settings.last_open_dir);
+    g_ui_db.set("last_export_dir", g_settings.last_export_dir);
+    g_ui_db.set("catalog_path", g_settings.catalog_path);
+    g_ui_db.set("selected_folder", g_settings.selected_folder);
+
+    int new_count = static_cast<int>(g_settings.library_folders.size());
+    int old_count = g_ui_db.getInt("library_folder_count", 0);
+    g_ui_db.setInt("library_folder_count", new_count);
+    for (int i = 0; i < new_count; ++i) {
+        g_ui_db.set("library_folder_" + std::to_string(i), g_settings.library_folders[i]);
+    }
+    // Remove stale keys from previous saves
+    for (int i = new_count; i < old_count; ++i) {
+        g_ui_db.set("library_folder_" + std::to_string(i), "");
+    }
+
+    // Save ImGui layout (only if ImGui context exists)
+    if (ImGui::GetCurrentContext()) {
+        const char* ini = ImGui::SaveIniSettingsToMemory();
+        if (ini) g_ui_db.setImGuiLayout(ini);
+    }
+}
 
 // Window
 static HWND g_hwnd = nullptr;
@@ -104,6 +182,7 @@ static std::atomic<bool> g_bg_running{false};     // bg thread is active
 static std::atomic<bool> g_bg_cancel{false};      // request bg thread to stop
 static vega::Pipeline g_bg_pipeline;              // separate pipeline for bg thread
 static double g_bg_pipeline_ms = 0.0;
+static std::thread g_bg_thread;                   // joinable background thread
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
     HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -172,30 +251,34 @@ static void launchBackgroundProcess()
         return;
     }
 
+    // Join previous thread before launching a new one
+    if (g_bg_thread.joinable()) g_bg_thread.join();
+
     g_bg_cancel = false;
     g_bg_running = true;
     g_bg_ready = false;
     g_bg_has_pending = false;
 
+    // Copy raw image data to avoid data race with main thread
     vega::EditRecipe recipe_copy = g_recipe;
-    std::thread([recipe_copy]() {
+    vega::RawImage raw_copy = g_raw_image;
+    g_bg_thread = std::thread([recipe_copy, raw_copy = std::move(raw_copy)]() {
         vega::Timer timer;
-        const auto& rgba = g_bg_pipeline.process(g_raw_image, recipe_copy);
+        const auto& rgba = g_bg_pipeline.process(raw_copy, recipe_copy);
         if (g_bg_cancel) {
-            // Cancelled — check if there's a pending recipe to process instead
             g_bg_running = false;
             return;
         }
         {
             std::lock_guard<std::mutex> lock(g_bg_mutex);
             g_bg_result.assign(rgba.begin(), rgba.end());
-            g_bg_w = g_raw_image.width;
-            g_bg_h = g_raw_image.height;
+            g_bg_w = raw_copy.width;
+            g_bg_h = raw_copy.height;
             g_bg_pipeline_ms = timer.elapsed_ms();
         }
         g_bg_ready = true;
         g_bg_running = false;
-    }).detach();
+    });
 }
 
 // Call every frame: if bg finished and there's a pending recipe, relaunch
@@ -279,11 +362,86 @@ static void pollBackgroundResult()
     g_bg_ready = false;
 }
 
-static void generateBeforeImage()
+static bool g_before_dirty = true;  // needs regeneration
+static std::thread g_before_thread;
+static std::vector<uint8_t> g_before_pending;
+static std::atomic<bool> g_before_ready{false};
+
+// Generate "before" image on a background thread (lazy, only when needed)
+static void generateBeforeImageAsync()
 {
-    if (!g_has_image) return;
-    g_before_rgba = g_pipeline.process(g_raw_image, vega::EditRecipe{});
+    if (!g_has_image || !g_before_dirty) return;
+    if (g_before_thread.joinable()) return;  // already running
+
+    g_before_dirty = false;
+    g_before_ready = false;
+
+    // Copy raw image to avoid data race with main thread
+    vega::RawImage raw_copy = g_raw_image;
+    g_before_thread = std::thread([raw_copy = std::move(raw_copy)]() {
+        vega::Pipeline pipe;
+        auto rgba = pipe.process(raw_copy, vega::EditRecipe{});
+        g_before_pending = std::move(rgba);
+        g_before_ready = true;
+    });
+}
+
+static void pollBeforeImage()
+{
+    if (!g_before_ready) return;
+    if (g_before_thread.joinable()) g_before_thread.join();
+
+    g_before_rgba = std::move(g_before_pending);
     uploadToGPU(g_before_rgba, g_raw_image.width, g_raw_image.height, g_before_tex, g_before_srv);
+    g_before_ready = false;
+}
+
+// Common decode + setup logic for opening a RAW file
+static bool setupRawImage(const std::filesystem::path& path)
+{
+    VEGA_LOG_INFO("Opening: {}", path.string());
+    vega::Timer timer;
+
+    auto result = vega::RawDecoder::decode(path);
+    if (!result) {
+        g_status_bar.filename = "Error: Failed to decode RAW file";
+        return false;
+    }
+
+    g_current_path = path;
+    g_raw_image = std::move(result.value());
+    VEGA_LOG_INFO("Decoded {}x{} in {:.1f}ms", g_raw_image.width, g_raw_image.height, timer.elapsed_ms());
+
+    vega::ExifReader::enrichMetadata(path, g_raw_image.metadata);
+    VEGA_LOG_INFO("EXIF: {} {} | ISO {} | {:.4f}s | f/{:.1f} | {}mm",
+        g_raw_image.metadata.camera_make, g_raw_image.metadata.camera_model,
+        g_raw_image.metadata.iso_speed, g_raw_image.metadata.shutter_speed,
+        g_raw_image.metadata.aperture, g_raw_image.metadata.focal_length_mm);
+
+    auto saved = vega::loadRecipe(path);
+    if (saved) VEGA_LOG_INFO("Loaded .vgr sidecar recipe");
+    g_recipe = saved ? *saved : vega::EditRecipe{};
+    g_history.clear();
+    g_has_image = true;
+
+    if (g_use_gpu)
+        g_gpu_pipeline.uploadRawData(g_raw_image);
+
+    reprocessPipeline();
+    g_before_dirty = true;
+
+    ImVec2 vp_size = ImGui::GetMainViewport()->WorkSize;
+    g_viewport.fitToWindow(ImVec2(vp_size.x * 0.65f, vp_size.y * 0.8f),
+                           g_raw_image.width, g_raw_image.height);
+
+    auto& m = g_raw_image.metadata;
+    g_status_bar.filename = path.filename().string();
+    g_status_bar.camera_info = m.camera_make + " " + m.camera_model;
+    g_status_bar.resolution = std::to_string(g_raw_image.width) + "x" + std::to_string(g_raw_image.height);
+
+    SetWindowTextW(g_hwnd, (L"Vega - " + path.filename().wstring()).c_str());
+    g_app_mode = AppMode::Develop;
+    return true;
 }
 
 static void openRawFile()
@@ -307,110 +465,14 @@ static void openRawFile()
     if (!GetOpenFileNameW(&ofn))
         return;
 
-    g_current_path = std::filesystem::path(filename);
-    g_settings.last_open_dir = g_current_path.parent_path().string();
-
-    VEGA_LOG_INFO("Opening: {}", g_current_path.string());
-    vega::Timer timer;
-
-    auto result = vega::RawDecoder::decode(g_current_path);
-    if (!result)
-    {
-        g_status_bar.filename = "Error: Failed to decode RAW file";
-        return;
-    }
-
-    g_raw_image = std::move(result.value());
-    double decode_ms = timer.elapsed_ms();
-    VEGA_LOG_INFO("Decoded {}x{} in {:.1f}ms (black={}, white={})",
-        g_raw_image.width, g_raw_image.height, decode_ms,
-        g_raw_image.black_level, g_raw_image.white_level);
-
-    vega::ExifReader::enrichMetadata(g_current_path, g_raw_image.metadata);
-    VEGA_LOG_INFO("EXIF: {} {} | ISO {} | {:.4f}s | f/{:.1f} | {}mm",
-        g_raw_image.metadata.camera_make, g_raw_image.metadata.camera_model,
-        g_raw_image.metadata.iso_speed, g_raw_image.metadata.shutter_speed,
-        g_raw_image.metadata.aperture, g_raw_image.metadata.focal_length_mm);
-
-    auto saved = vega::loadRecipe(g_current_path);
-    if (saved) VEGA_LOG_INFO("Loaded .vgr sidecar recipe");
-    g_recipe = saved ? *saved : vega::EditRecipe{};
-    g_history.clear();
-    g_has_image = true;
-
-    // Upload to GPU if available
-    if (g_use_gpu)
-        g_gpu_pipeline.uploadRawData(g_raw_image);
-
-    vega::Timer pipeline_timer;
-    reprocessPipeline();
-    VEGA_LOG_INFO("Initial pipeline: {:.1f}ms", pipeline_timer.elapsed_ms());
-    generateBeforeImage();
-
-    // Fit image to viewport on first load
-    ImVec2 vp_size = ImGui::GetMainViewport()->WorkSize;
-    g_viewport.fitToWindow(ImVec2(vp_size.x * 0.65f, vp_size.y * 0.8f),
-                           g_raw_image.width, g_raw_image.height);
-
-    auto& m = g_raw_image.metadata;
-    g_status_bar.filename = g_current_path.filename().string();
-    g_status_bar.camera_info = m.camera_make + " " + m.camera_model;
-    g_status_bar.resolution = std::to_string(g_raw_image.width) + "x" + std::to_string(g_raw_image.height);
-    g_status_bar.pipeline_ms = decode_ms;
-
-    // Update window title
-    std::wstring title = L"Vega - " +
-        std::wstring(g_current_path.filename().wstring());
-    SetWindowTextW(g_hwnd, title.c_str());
-
-    // Switch to Develop mode when opening a file
-    g_app_mode = AppMode::Develop;
+    auto path = std::filesystem::path(filename);
+    g_settings.last_open_dir = path.parent_path().string();
+    setupRawImage(path);
 }
 
-// Load a RAW file by path and switch to Develop mode
 static void loadRawAndDevelop(const std::filesystem::path& path)
 {
-    g_current_path = path;
-    VEGA_LOG_INFO("Loading for develop: {}", path.string());
-    vega::Timer timer;
-
-    auto result = vega::RawDecoder::decode(path);
-    if (!result) {
-        g_status_bar.filename = "Error: Failed to decode RAW file";
-        return;
-    }
-
-    g_raw_image = std::move(result.value());
-    double decode_ms = timer.elapsed_ms();
-    VEGA_LOG_INFO("Decoded {}x{} in {:.1f}ms", g_raw_image.width, g_raw_image.height, decode_ms);
-
-    vega::ExifReader::enrichMetadata(path, g_raw_image.metadata);
-
-    auto saved = vega::loadRecipe(path);
-    g_recipe = saved ? *saved : vega::EditRecipe{};
-    g_history.clear();
-    g_has_image = true;
-
-    if (g_use_gpu)
-        g_gpu_pipeline.uploadRawData(g_raw_image);
-
-    reprocessPipeline();
-    generateBeforeImage();
-
-    ImVec2 vp_size = ImGui::GetMainViewport()->WorkSize;
-    g_viewport.fitToWindow(ImVec2(vp_size.x * 0.65f, vp_size.y * 0.8f),
-                           g_raw_image.width, g_raw_image.height);
-
-    auto& m = g_raw_image.metadata;
-    g_status_bar.filename = path.filename().string();
-    g_status_bar.camera_info = m.camera_make + " " + m.camera_model;
-    g_status_bar.resolution = std::to_string(g_raw_image.width) + "x" + std::to_string(g_raw_image.height);
-    g_status_bar.pipeline_ms = decode_ms;
-
-    std::wstring title = L"Vega - " + std::wstring(path.filename().wstring());
-    SetWindowTextW(g_hwnd, title.c_str());
-
-    g_app_mode = AppMode::Develop;
+    setupRawImage(path);
 }
 
 // Win32 folder picker using IFileDialog (Vista+)
@@ -445,22 +507,40 @@ static std::filesystem::path pickFolder()
     return result;
 }
 
+// Background import state — results posted back to main thread via polling
+static std::thread g_import_thread;
+struct ImportResult {
+    std::filesystem::path folder_path;
+    int folder_index = -1;
+    int64_t db_count = 0;
+    bool done = false;
+};
+static ImportResult g_import_result;
+
 // Import a folder in background thread
 static void importFolderAsync(const std::filesystem::path& folder_path, int folder_index)
 {
     if (g_import_running) return;
 
+    // Wait for previous thread to finish
+    if (g_import_thread.joinable()) g_import_thread.join();
+
     g_import_running = true;
     g_folder_panel.setImporting(folder_index, true);
 
+    {
+        std::lock_guard<std::mutex> lock(g_import_mutex);
+        g_import_result = {};
+        g_import_result.folder_index = folder_index;
+        g_import_result.folder_path = folder_path;
+    }
+
     std::filesystem::path folder_copy = folder_path;
-    std::thread([folder_copy, folder_index]() {
+    g_import_thread = std::thread([folder_copy, folder_index]() {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
-        // Scan
         auto files = vega::ImportManager::scanDirectory(folder_copy);
 
-        // Import
         vega::ImportManager mgr;
         mgr.import(files, g_database, g_thumb_cache,
             [&](const vega::ImportManager::ImportProgress& p) {
@@ -468,16 +548,32 @@ static void importFolderAsync(const std::filesystem::path& folder_path, int fold
                 g_import_progress = p;
             });
 
-        // Update folder count from DB (accurate count of imported photos)
+        // Post result for main thread to pick up (don't touch UI from here)
         int64_t db_count = g_database.countByFolder(folder_copy.string());
-        g_folder_panel.updateRawCount(folder_index, static_cast<int>(db_count));
-        g_folder_panel.setImporting(folder_index, false);
-        g_grid_view.refresh();
-        g_import_running = false;
+        {
+            std::lock_guard<std::mutex> lock(g_import_mutex);
+            g_import_result.db_count = db_count;
+            g_import_result.done = true;
+        }
 
         VEGA_LOG_INFO("Import complete for folder: {}", folder_copy.string());
         CoUninitialize();
-    }).detach();
+    });
+}
+
+// Call from main thread each frame to apply import results safely
+static void pollImportResult()
+{
+    if (!g_import_running) return;
+
+    std::lock_guard<std::mutex> lock(g_import_mutex);
+    if (!g_import_result.done) return;
+
+    int idx = g_import_result.folder_index;
+    g_folder_panel.updateRawCount(idx, static_cast<int>(g_import_result.db_count));
+    g_folder_panel.setImporting(idx, false);
+    g_grid_view.refresh();
+    g_import_running = false;
 }
 
 // Add a folder: store in settings, add to panel, start import
@@ -681,8 +777,10 @@ static void renderMenuBar()
             if (ImGui::MenuItem("Zoom 200%", "2"))
                 ;
             ImGui::Separator();
-            if (ImGui::MenuItem(tr(S::MENU_BEFORE_AFTER), "B", g_show_before_after))
+            if (ImGui::MenuItem(tr(S::MENU_BEFORE_AFTER), "B", g_show_before_after)) {
                 g_show_before_after = !g_show_before_after;
+                if (g_show_before_after && g_before_dirty) generateBeforeImageAsync();
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(tr(S::MENU_LANGUAGE)))
@@ -715,7 +813,27 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     VEGA_LOG_INFO("=== Vega v0.1.0 starting ===");
     VEGA_LOG_INFO("Log file: vega.log");
 
-    g_settings = vega::AppSettings::load();
+    // Open UI state database (next to exe)
+    {
+        wchar_t exe_buf[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
+        auto exe_dir = std::filesystem::path(exe_buf).parent_path();
+        g_ui_db.open(exe_dir / "ui_state.db");
+    }
+
+    // First run: migrate from settings.json if it exists
+    if (!g_ui_db.get("language").has_value()) {
+        auto old_settings = vega::AppSettings::load();
+        g_settings = old_settings;
+        // Write all settings into the new DB
+        if (g_ui_db.isOpen()) {
+            saveSettingsToDB();
+            VEGA_LOG_INFO("Migrated settings.json to ui_state.db");
+        }
+    } else {
+        loadSettingsFromDB();
+    }
+
     VEGA_LOG_INFO("Settings: maximized={} gpu={} preview_quality={}",
         g_settings.maximized, g_settings.use_gpu, g_settings.preview_quality);
 
@@ -754,9 +872,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.IniFilename = "vega_imgui.ini";
+    io.IniFilename = nullptr;  // we manage layout via UIStateDB
 
     applyVegaTheme();
+
+    // Restore ImGui layout from DB (if previously saved)
+    auto saved_layout = g_ui_db.getImGuiLayout();
+    bool has_saved_layout = saved_layout.has_value() && !saved_layout->empty();
+    if (has_saved_layout) {
+        ImGui::LoadIniSettingsFromMemory(saved_layout->c_str(), saved_layout->size());
+    }
 
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_ctx.device(), g_ctx.context());
@@ -810,7 +935,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     };
     tb_cb.on_zoom_100 = []{ /* handled by viewport F/1/2 keys */ };
     tb_cb.on_zoom_200 = []{};
-    tb_cb.on_toggle_before_after = []{ g_show_before_after = !g_show_before_after; };
+    tb_cb.on_toggle_before_after = []{
+        g_show_before_after = !g_show_before_after;
+        if (g_show_before_after && g_before_dirty) generateBeforeImageAsync();
+    };
     tb_cb.on_mode_grid = []{ g_app_mode = AppMode::Library; };
     tb_cb.on_mode_develop = []{ g_app_mode = AppMode::Develop; };
     g_toolbar.setCallbacks(tb_cb);
@@ -934,9 +1062,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
+        // Flush decoded thumbnails from worker threads to GPU
+        g_thumb_cache.flushPending();
+
         // Poll background pipeline result + relaunch if pending
         pollBackgroundResult();
         checkPendingBackground();
+        pollImportResult();
+        pollBeforeImage();
 
         // Menu bar
         renderMenuBar();
@@ -949,8 +1082,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGuiViewport* vp = ImGui::GetMainViewport();
         float toolbar_h = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
         float statusbar_h = ImGui::GetFrameHeight();
+        float ds_h = vp->WorkSize.y - toolbar_h - statusbar_h;
+        if (ds_h < 1.0f) ds_h = 1.0f;
         ImVec2 ds_pos(vp->WorkPos.x, vp->WorkPos.y + toolbar_h);
-        ImVec2 ds_size(vp->WorkSize.x, vp->WorkSize.y - toolbar_h - statusbar_h);
+        ImVec2 ds_size(vp->WorkSize.x, ds_h);
 
         ImGui::SetNextWindowPos(ds_pos);
         ImGui::SetNextWindowSize(ds_size);
@@ -959,7 +1094,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
             ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBringToFrontOnFocus |
-            ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBackground;
+            ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBackground |
+            ImGuiWindowFlags_NoSavedSettings;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -969,12 +1105,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         ImGui::DockSpace(dockspace_id);
         ImGui::End();
 
-        // Set up default layout on first frame (if no saved layout)
+        // Build default layout on first frame if no saved layout exists
         if (g_first_frame)
         {
             g_first_frame = false;
-            if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr ||
-                !std::filesystem::exists("vega_imgui.ini"))
+            if (!has_saved_layout ||
+                ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
             {
                 buildDefaultLayout(dockspace_id);
             }
@@ -1006,8 +1142,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             { g_recipe = g_history.redo(); reprocessPipeline(); }
             if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E) && g_has_image)
                 g_export_dialog.open(g_current_path);
-            if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !io.KeyCtrl && !io.KeyAlt)
+            if (ImGui::IsKeyPressed(ImGuiKey_B, false) && !io.KeyCtrl && !io.KeyAlt) {
                 g_show_before_after = !g_show_before_after;
+                if (g_show_before_after && g_before_dirty)
+                    generateBeforeImageAsync();
+            }
             if (ImGui::IsKeyPressed(ImGuiKey_M, false) && g_show_before_after)
                 g_before_after.toggleMode();
             if (g_show_before_after)
@@ -1161,13 +1300,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         VEGA_LOG_INFO("Saving window state: {}x{} at ({},{}) maximized={}",
             g_settings.window_w, g_settings.window_h,
             g_settings.window_x, g_settings.window_y, g_settings.maximized);
-        g_settings.save();
+        saveSettingsToDB();
     }
 
     // Cleanup
     VEGA_LOG_INFO("Shutting down...");
+    g_bg_cancel = true;
+    if (g_bg_thread.joinable()) g_bg_thread.join();
+    if (g_import_thread.joinable()) g_import_thread.join();
+    if (g_before_thread.joinable()) g_before_thread.join();
+    g_thumb_cache.shutdown();
     g_database.close();
-    g_thumb_cache.clear();
+    g_ui_db.close();
     g_image_srv.Reset(); g_image_tex.Reset();
     g_before_srv.Reset(); g_before_tex.Reset();
     ImGui_ImplDX11_Shutdown();

@@ -14,7 +14,10 @@ if "%1"=="clean" (
     rd /s /q out\build\windows-x64-debug 2>nul
     rd /s /q out\build\windows-x64-release 2>nul
     rd /s /q dist 2>nul
-    echo Clean done.
+    echo Cleaning user data...
+    del /q "%APPDATA%\Vega\settings.json" 2>nul
+    rd /s /q "%APPDATA%\Vega" 2>nul
+    echo Clean done. All build output, databases, and settings removed.
     exit /b 0
 )
 
@@ -28,7 +31,7 @@ if "%1"=="package" (
     mkdir dist\vega
     copy out\build\windows-x64-release\src\vega.exe dist\vega\
     copy out\build\windows-x64-release\src\*.dll dist\vega\
-    xcopy /s /i shaders dist\vega\shaders
+    xcopy /s /i out\build\windows-x64-release\src\shaders dist\vega\shaders
     copy LICENSE dist\vega\
     copy README.md dist\vega\
     echo.
