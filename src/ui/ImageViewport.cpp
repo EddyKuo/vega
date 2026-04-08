@@ -87,26 +87,37 @@ void ImageViewport::handleInput(ImVec2 viewport_size, uint32_t img_w, uint32_t i
         return;
     }
 
-    // Mouse wheel zoom centered on cursor
+    // Mouse wheel zoom centered on cursor (only when cursor is over the image)
     float wheel = io.MouseWheel;
     if (wheel != 0.0f)
     {
         ImVec2 mouse = ImGui::GetMousePos();
 
-        // Mouse offset from viewport center
+        // Check if mouse is over the image
+        float disp_w = img_w * zoom_;
+        float disp_h = img_h * zoom_;
         float vp_cx = content_min_.x + content_size_.x * 0.5f;
         float vp_cy = content_min_.y + content_size_.y * 0.5f;
-        float mx = mouse.x - vp_cx;
-        float my = mouse.y - vp_cy;
+        float img_x0 = vp_cx - disp_w * 0.5f + pan_.x;
+        float img_y0 = vp_cy - disp_h * 0.5f + pan_.y;
 
-        float old_zoom = zoom_;
-        float factor = (wheel > 0) ? 1.15f : (1.0f / 1.15f);
-        zoom_ = std::clamp(zoom_ * factor, 0.01f, 32.0f);
+        bool on_image = mouse.x >= img_x0 && mouse.x <= img_x0 + disp_w &&
+                        mouse.y >= img_y0 && mouse.y <= img_y0 + disp_h;
 
-        // Keep the point under cursor fixed
-        float ratio = 1.0f - zoom_ / old_zoom;
-        pan_.x += mx * ratio;
-        pan_.y += my * ratio;
+        if (on_image)
+        {
+            float mx = mouse.x - vp_cx;
+            float my = mouse.y - vp_cy;
+
+            float old_zoom = zoom_;
+            float factor = (wheel > 0) ? 1.15f : (1.0f / 1.15f);
+            zoom_ = std::clamp(zoom_ * factor, 0.01f, 32.0f);
+
+            // Keep the image point under cursor fixed
+            float zr = zoom_ / old_zoom;
+            pan_.x = pan_.x * zr + mx * (1.0f - zr);
+            pan_.y = pan_.y * zr + my * (1.0f - zr);
+        }
     }
 
     // Pan: left mouse drag (like Lightroom), middle mouse, or Space+Left

@@ -125,6 +125,128 @@ static std::vector<uint8_t> decodeJpegToRGBA(
     return rgba;
 }
 
+/// Resize a JPEG to fit within max_dim (long edge) and re-encode as JPEG.
+/// Returns the compressed JPEG bytes. Thread-safe (creates own WIC factory).
+static std::vector<uint8_t> resizeJpeg(
+    const std::vector<uint8_t>& jpeg_in, int max_dim, int orientation)
+{
+    if (jpeg_in.empty() || max_dim <= 0) return jpeg_in;
+
+    Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic));
+    if (FAILED(hr)) return jpeg_in;
+
+    // Decode input JPEG
+    Microsoft::WRL::ComPtr<IWICStream> stream;
+    wic->CreateStream(&stream);
+    stream->InitializeFromMemory(const_cast<BYTE*>(jpeg_in.data()),
+        static_cast<DWORD>(jpeg_in.size()));
+
+    Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+    hr = wic->CreateDecoderFromStream(stream.Get(), nullptr,
+        WICDecodeMetadataCacheOnDemand, &decoder);
+    if (FAILED(hr)) return jpeg_in;
+
+    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+    decoder->GetFrame(0, &frame);
+
+    UINT src_w = 0, src_h = 0;
+    frame->GetSize(&src_w, &src_h);
+
+    // Apply orientation to determine effective dimensions
+    bool swap_dims = (orientation == 5 || orientation == 6 ||
+                      orientation == 7 || orientation == 8);
+    UINT eff_w = swap_dims ? src_h : src_w;
+    UINT eff_h = swap_dims ? src_w : src_h;
+
+    // Already small enough?
+    if (static_cast<int>(std::max(eff_w, eff_h)) <= max_dim)
+        return jpeg_in;
+
+    // Calculate target size preserving aspect ratio
+    float scale = static_cast<float>(max_dim) / static_cast<float>(std::max(src_w, src_h));
+    UINT dst_w = std::max(1u, static_cast<UINT>(src_w * scale));
+    UINT dst_h = std::max(1u, static_cast<UINT>(src_h * scale));
+
+    // Scale
+    Microsoft::WRL::ComPtr<IWICBitmapScaler> scaler;
+    wic->CreateBitmapScaler(&scaler);
+    scaler->Initialize(frame.Get(), dst_w, dst_h, WICBitmapInterpolationModeFant);
+
+    // Apply orientation rotation
+    IWICBitmapSource* final_source = scaler.Get();
+    Microsoft::WRL::ComPtr<IWICBitmapFlipRotator> rotator;
+    WICBitmapTransformOptions xform = orientationToWicTransform(orientation);
+    if (xform != WICBitmapTransformRotate0) {
+        wic->CreateBitmapFlipRotator(&rotator);
+        if (SUCCEEDED(rotator->Initialize(scaler.Get(), xform)))
+            final_source = rotator.Get();
+    }
+
+    // Encode to JPEG in memory
+    Microsoft::WRL::ComPtr<IWICStream> out_stream;
+    wic->CreateStream(&out_stream);
+
+    // Use HGLOBAL stream for in-memory encoding
+    IStream* mem_stream = nullptr;
+    hr = CreateStreamOnHGlobal(nullptr, TRUE, &mem_stream);
+    if (FAILED(hr)) return jpeg_in;
+
+    Microsoft::WRL::ComPtr<IWICBitmapEncoder> encoder;
+    hr = wic->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, &encoder);
+    if (FAILED(hr)) { mem_stream->Release(); return jpeg_in; }
+
+    encoder->Initialize(mem_stream, WICBitmapEncoderNoCache);
+
+    Microsoft::WRL::ComPtr<IWICBitmapFrameEncode> out_frame;
+    IPropertyBag2* props = nullptr;
+    encoder->CreateNewFrame(&out_frame, &props);
+
+    // Set JPEG quality to 85
+    if (props) {
+        PROPBAG2 opt = {};
+        opt.pstrName = const_cast<LPOLESTR>(L"ImageQuality");
+        VARIANT val;
+        VariantInit(&val);
+        val.vt = VT_R4;
+        val.fltVal = 0.85f;
+        props->Write(1, &opt, &val);
+    }
+
+    out_frame->Initialize(props);
+    out_frame->SetSize(dst_w, dst_h);
+
+    WICPixelFormatGUID fmt = GUID_WICPixelFormat24bppBGR;
+    out_frame->SetPixelFormat(&fmt);
+
+    // Convert source to the encoder's pixel format
+    Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+    wic->CreateFormatConverter(&converter);
+    converter->Initialize(final_source, fmt, WICBitmapDitherTypeNone,
+        nullptr, 0.0, WICBitmapPaletteTypeMedianCut);
+
+    out_frame->WriteSource(converter.Get(), nullptr);
+    out_frame->Commit();
+    encoder->Commit();
+
+    // Read result from memory stream
+    STATSTG stat{};
+    mem_stream->Stat(&stat, STATFLAG_NONAME);
+    ULONG out_size = static_cast<ULONG>(stat.cbSize.QuadPart);
+
+    std::vector<uint8_t> result(out_size);
+    LARGE_INTEGER zero{};
+    mem_stream->Seek(zero, STREAM_SEEK_SET, nullptr);
+    ULONG read = 0;
+    mem_stream->Read(result.data(), out_size, &read);
+    mem_stream->Release();
+
+    if (props) props->Release();
+
+    return result;
+}
+
 /// Create D3D11 SRV from RGBA pixels (must be called with valid device).
 static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>
 createSRVFromRGBA(ID3D11Device* device, const uint8_t* rgba,
@@ -321,16 +443,23 @@ void ThumbnailCache::workerLoop()
             jpeg_data = db_->loadThumbnail(req.uuid, static_cast<int>(req.level));
         }
 
+        bool from_raw = false;
         if (jpeg_data.empty()) {
             auto result = RawDecoder::extractThumbnail(req.raw_path);
             if (result) {
                 jpeg_data = std::move(result.value());
+                from_raw = true;
+            }
+        }
 
-                // Save to DB for next time
-                if (db_ && !jpeg_data.empty()) {
-                    db_->saveThumbnail(req.uuid, static_cast<int>(req.level),
-                                       jpeg_data.data(), jpeg_data.size());
-                }
+        // Resize + re-encode before saving to DB (raw thumbnails can be 1-3MB)
+        if (from_raw && !jpeg_data.empty()) {
+            int max_dim = static_cast<int>(req.level);
+            jpeg_data = resizeJpeg(jpeg_data, max_dim, req.orientation);
+
+            if (db_) {
+                db_->saveThumbnail(req.uuid, static_cast<int>(req.level),
+                                   jpeg_data.data(), jpeg_data.size());
             }
         }
 
@@ -342,8 +471,11 @@ void ThumbnailCache::workerLoop()
         }
 
         // Decode JPEG to RGBA pixels (CPU work, thread-safe)
+        // DB thumbnails are already resized+rotated by resizeJpeg, so orientation=0.
+        // Only apply orientation for non-resized data (shouldn't happen normally).
+        int decode_orientation = from_raw ? 0 : req.orientation;
         uint32_t w = 0, h = 0;
-        auto rgba = decodeJpegToRGBA(jpeg_data, req.orientation, w, h);
+        auto rgba = decodeJpegToRGBA(jpeg_data, decode_orientation, w, h);
 
         if (!rgba.empty()) {
             DecodeResult dr;
