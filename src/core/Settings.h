@@ -24,6 +24,7 @@ struct AppSettings {
     std::string last_export_dir;
     std::string catalog_path;
     std::vector<std::string> library_folders;
+    std::string selected_folder;  // last selected folder path (empty = All Photos)
 
     // Load/Save
     static AppSettings load();

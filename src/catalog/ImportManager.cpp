@@ -263,7 +263,8 @@ ImportManager::ImportProgress ImportManager::import(
         }
 
         // 5. Generate thumbnail
-        thumb_cache.generateAsync(record.uuid, file_path);
+        thumb_cache.getThumbnail(record.uuid, file_path,
+                                 ThumbnailCache::Level::Small, record.orientation);
 
         progress.imported++;
         VEGA_LOG_INFO("ImportManager::import – imported: {} (id={})",

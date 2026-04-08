@@ -117,4 +117,17 @@ void FolderPanel::setImporting(int index, bool importing)
     }
 }
 
+bool FolderPanel::selectByPath(const std::filesystem::path& path)
+{
+    for (int i = 0; i < static_cast<int>(folders_.size()); ++i) {
+        if (folders_[i].path == path) {
+            selected_idx_ = i;
+            show_all_selected_ = false;
+            if (on_folder_selected_) on_folder_selected_(path);
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace vega

@@ -121,3 +121,68 @@ target_link_libraries(vega PRIVATE
     ole32
 )
 target_include_directories(vega PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ── Precompile HLSL shaders to CSO ──
+if(FXC_EXECUTABLE)
+    set(SHADER_SOURCE_DIR "${CMAKE_SOURCE_DIR}/shaders")
+    set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
+    file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
+
+    set(VEGA_HLSL_SHADERS
+        white_balance_exposure.hlsl
+        tone_curve.hlsl
+        hsl_adjust.hlsl
+        denoise.hlsl
+        sharpen_usm.hlsl
+        gamma_output.hlsl
+        histogram_compute.hlsl
+    )
+
+    set(FXC_FLAGS /nologo /T cs_5_0 /E CSMain)
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        list(APPEND FXC_FLAGS /Zi /Od)
+    else()
+        list(APPEND FXC_FLAGS /O3)
+    endif()
+
+    set(SHADER_CSO_OUTPUTS "")
+    foreach(SHADER_FILE ${VEGA_HLSL_SHADERS})
+        get_filename_component(SHADER_NAME ${SHADER_FILE} NAME_WE)
+        set(SHADER_INPUT  "${SHADER_SOURCE_DIR}/${SHADER_FILE}")
+        set(SHADER_OUTPUT "${SHADER_OUTPUT_DIR}/${SHADER_NAME}.cso")
+
+        add_custom_command(
+            OUTPUT ${SHADER_OUTPUT}
+            COMMAND ${FXC_EXECUTABLE} ${FXC_FLAGS}
+                    /I "${SHADER_SOURCE_DIR}"
+                    /Fo "${SHADER_OUTPUT}"
+                    "${SHADER_INPUT}"
+            DEPENDS ${SHADER_INPUT} "${SHADER_SOURCE_DIR}/common.hlsli"
+            COMMENT "Compiling shader ${SHADER_FILE} -> ${SHADER_NAME}.cso"
+            VERBATIM
+        )
+        list(APPEND SHADER_CSO_OUTPUTS ${SHADER_OUTPUT})
+    endforeach()
+
+    add_custom_target(compile_shaders ALL DEPENDS ${SHADER_CSO_OUTPUTS})
+    add_dependencies(vega compile_shaders)
+
+    # Copy CSO files next to the executable after build
+    add_custom_command(TARGET vega POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:vega>/shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${SHADER_OUTPUT_DIR}"
+            "$<TARGET_FILE_DIR:vega>/shaders"
+        COMMENT "Copying compiled shaders to output directory"
+    )
+
+    # In Debug, also copy HLSL sources for live editing
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_custom_command(TARGET vega POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${SHADER_SOURCE_DIR}"
+                "$<TARGET_FILE_DIR:vega>/shaders"
+            COMMENT "Copying HLSL sources for debug"
+        )
+    endif()
+endif()

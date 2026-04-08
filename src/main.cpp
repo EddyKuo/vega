@@ -589,7 +589,11 @@ static void buildDefaultLayout(ImGuiID dockspace_id)
 {
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->WorkSize);
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    float tb_h = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+    float sb_h = ImGui::GetFrameHeight();
+    ImGui::DockBuilderSetNodeSize(dockspace_id,
+        ImVec2(vp->WorkSize.x, vp->WorkSize.y - tb_h - sb_h));
 
     // Split: left 75% (viewport area) | right 25% (develop panel)
     ImGuiID dock_right;
@@ -815,15 +819,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
     {
         std::string cat_path = g_settings.catalog_path;
         if (cat_path.empty()) {
-            // Default catalog location: %APPDATA%/Vega/catalog.db
-            wchar_t* appdata_raw = nullptr;
-            if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata_raw))) {
-                auto dir = std::filesystem::path(appdata_raw) / "Vega";
-                CoTaskMemFree(appdata_raw);
-                cat_path = (dir / "catalog.db").string();
-            } else {
-                cat_path = "catalog.db";
-            }
+            // Default catalog location: next to the executable
+            wchar_t exe_buf[MAX_PATH]{};
+            GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
+            auto exe_dir = std::filesystem::path(exe_buf).parent_path();
+            cat_path = (exe_dir / "catalog.db").string();
             g_settings.catalog_path = cat_path;
         }
 
@@ -833,9 +833,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             VEGA_LOG_ERROR("Failed to open catalog: {}", cat_path);
         }
 
-        // Initialize thumbnail cache
-        auto thumb_dir = std::filesystem::path(cat_path).parent_path() / "thumbnails";
-        g_thumb_cache.initialize(thumb_dir, g_ctx.device());
+        // Initialize thumbnail cache (DB-backed)
+        g_thumb_cache.initialize(&g_database, g_ctx.device());
     }
 
     // ── Wire FolderPanel callbacks ──
@@ -845,9 +844,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         vega::Database::FilterCriteria filter;
         filter.folder_path = path.string();
         g_grid_view.setFilter(filter);
+        g_settings.selected_folder = path.string();
     });
     g_folder_panel.setOnShowAll([]() {
         g_grid_view.setFilter(vega::Database::FilterCriteria{});
+        g_settings.selected_folder.clear();
     });
 
     // ── Wire GridView double-click ──
@@ -873,6 +874,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
 
             VEGA_LOG_INFO("Restored folder: {} ({} photos)", folder_str, count);
         }
+    }
+
+    // Restore last selected folder
+    if (!g_settings.selected_folder.empty()) {
+        g_folder_panel.selectByPath(std::filesystem::path(g_settings.selected_folder));
     }
 
     // WB Eyedropper callback: sample pixel from the demosaiced linear data
@@ -939,8 +945,29 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         g_toolbar.render(g_has_image, g_history.canUndo(), g_history.canRedo(),
                          g_app_mode == AppMode::Develop);
 
-        // Dockspace (standard approach, toolbar overlaps but toolbar is always on top)
-        ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+        // Dockspace -- offset below toolbar and above status bar so they don't overlap
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        float toolbar_h = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+        float statusbar_h = ImGui::GetFrameHeight();
+        ImVec2 ds_pos(vp->WorkPos.x, vp->WorkPos.y + toolbar_h);
+        ImVec2 ds_size(vp->WorkSize.x, vp->WorkSize.y - toolbar_h - statusbar_h);
+
+        ImGui::SetNextWindowPos(ds_pos);
+        ImGui::SetNextWindowSize(ds_size);
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGuiWindowFlags ds_flags =
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBringToFrontOnFocus |
+            ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBackground;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::Begin("##DockSpaceHost", nullptr, ds_flags);
+        ImGui::PopStyleVar(3);
+        ImGuiID dockspace_id = ImGui::GetID("VegaDockSpace");
+        ImGui::DockSpace(dockspace_id);
+        ImGui::End();
 
         // Set up default layout on first frame (if no saved layout)
         if (g_first_frame)

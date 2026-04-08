@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "catalog/ThumbnailCache.h"
+#include "catalog/Database.h"
 #include "raw/RawDecoder.h"
 #include "core/Logger.h"
 
@@ -9,8 +10,8 @@
 #pragma comment(lib, "windowscodecs.lib")
 
 #include <algorithm>
-#include <fstream>
 #include <chrono>
+#include <filesystem>
 
 namespace vega {
 
@@ -26,44 +27,53 @@ static uint64_t currentTimestamp()
             now.time_since_epoch()).count());
 }
 
-static std::string levelSuffix(ThumbnailCache::Level level)
+static std::string cacheKey(const std::string& uuid, ThumbnailCache::Level level)
 {
+    const char* suffix = "_320";
     switch (level) {
-        case ThumbnailCache::Level::Micro:  return "_160";
-        case ThumbnailCache::Level::Small:  return "_320";
-        case ThumbnailCache::Level::Medium: return "_1024";
-        case ThumbnailCache::Level::Large:  return "_2048";
+        case ThumbnailCache::Level::Micro:  suffix = "_160"; break;
+        case ThumbnailCache::Level::Small:  suffix = "_320"; break;
+        case ThumbnailCache::Level::Medium: suffix = "_1024"; break;
+        case ThumbnailCache::Level::Large:  suffix = "_2048"; break;
     }
-    return "_320";
+    return uuid + suffix;
 }
 
-/// Attempt to create a D3D11 texture+SRV from raw JPEG bytes.
-/// We use the embedded thumbnail from the RAW file which is already JPEG.
-/// For display in ImGui we need an RGBA texture. We decode the JPEG
-/// in-memory using a minimal approach: since the RAW decoder already gives
-/// us JPEG bytes from the embedded thumbnail, we create a simple 1x1 placeholder
-/// if we cannot decode, or use the raw bytes if the GPU supports JPEG decode.
-///
-/// For a real implementation we would use stb_image or WIC. Here we use
-/// WIC (Windows Imaging Component) since we are on Windows with D3D11.
+/// Map LibRaw flip / EXIF orientation to WIC transform flags.
+static WICBitmapTransformOptions orientationToWicTransform(int orientation)
+{
+    switch (orientation) {
+        case 3:  return WICBitmapTransformRotate180;
+        case 5:  // LibRaw 90 CCW
+        case 8:  // EXIF 90 CCW
+            return WICBitmapTransformRotate270;
+        case 6:  return WICBitmapTransformRotate90;
+        case 2:  return WICBitmapTransformFlipHorizontal;
+        case 4:  return WICBitmapTransformFlipVertical;
+        case 7:  return static_cast<WICBitmapTransformOptions>(
+                     WICBitmapTransformRotate90 | WICBitmapTransformFlipHorizontal);
+        default: return WICBitmapTransformRotate0;
+    }
+}
+
+/// Decode JPEG bytes to a D3D11 SRV, applying EXIF orientation rotation.
 static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>
-createSRVFromJpeg(ID3D11Device* device, const std::vector<uint8_t>& jpeg_data)
+createSRVFromJpeg(ID3D11Device* device, const std::vector<uint8_t>& jpeg_data,
+                  int orientation = 0)
 {
     if (!device || jpeg_data.empty()) return nullptr;
 
-    // Use WIC to decode JPEG to RGBA bitmap
-    // We include wincodec.h for IWICImagingFactory
     Microsoft::WRL::ComPtr<IWICImagingFactory> wic_factory;
     HRESULT hr = CoCreateInstance(
         CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&wic_factory));
 
     if (FAILED(hr)) {
-        VEGA_LOG_ERROR("ThumbnailCache – CoCreateInstance(WICImagingFactory) failed: 0x{:08X}", static_cast<unsigned>(hr));
+        VEGA_LOG_ERROR("ThumbnailCache: WIC factory creation failed: 0x{:08X}",
+                       static_cast<unsigned>(hr));
         return nullptr;
     }
 
-    // Create stream from memory
     Microsoft::WRL::ComPtr<IWICStream> stream;
     hr = wic_factory->CreateStream(&stream);
     if (FAILED(hr)) return nullptr;
@@ -73,19 +83,16 @@ createSRVFromJpeg(ID3D11Device* device, const std::vector<uint8_t>& jpeg_data)
         static_cast<DWORD>(jpeg_data.size()));
     if (FAILED(hr)) return nullptr;
 
-    // Create decoder
     Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
     hr = wic_factory->CreateDecoderFromStream(
         stream.Get(), nullptr,
         WICDecodeMetadataCacheOnDemand, &decoder);
     if (FAILED(hr)) return nullptr;
 
-    // Get first frame
     Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
     hr = decoder->GetFrame(0, &frame);
     if (FAILED(hr)) return nullptr;
 
-    // Convert to RGBA 32bpp
     Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
     hr = wic_factory->CreateFormatConverter(&converter);
     if (FAILED(hr)) return nullptr;
@@ -98,18 +105,30 @@ createSRVFromJpeg(ID3D11Device* device, const std::vector<uint8_t>& jpeg_data)
         WICBitmapPaletteTypeMedianCut);
     if (FAILED(hr)) return nullptr;
 
-    UINT width = 0, height = 0;
-    converter->GetSize(&width, &height);
+    // Apply orientation rotation if needed
+    IWICBitmapSource* final_source = converter.Get();
+    Microsoft::WRL::ComPtr<IWICBitmapFlipRotator> rotator;
+    WICBitmapTransformOptions xform = orientationToWicTransform(orientation);
 
+    if (xform != WICBitmapTransformRotate0) {
+        hr = wic_factory->CreateBitmapFlipRotator(&rotator);
+        if (SUCCEEDED(hr)) {
+            hr = rotator->Initialize(converter.Get(), xform);
+            if (SUCCEEDED(hr)) {
+                final_source = rotator.Get();
+            }
+        }
+    }
+
+    UINT width = 0, height = 0;
+    final_source->GetSize(&width, &height);
     if (width == 0 || height == 0) return nullptr;
 
-    // Copy pixels
     std::vector<uint8_t> rgba(width * height * 4);
-    hr = converter->CopyPixels(nullptr, width * 4,
-                               static_cast<UINT>(rgba.size()), rgba.data());
+    hr = final_source->CopyPixels(nullptr, width * 4,
+                                  static_cast<UINT>(rgba.size()), rgba.data());
     if (FAILED(hr)) return nullptr;
 
-    // Create D3D11 texture
     D3D11_TEXTURE2D_DESC tex_desc = {};
     tex_desc.Width = width;
     tex_desc.Height = height;
@@ -139,31 +158,20 @@ createSRVFromJpeg(ID3D11Device* device, const std::vector<uint8_t>& jpeg_data)
 // Public API
 // ---------------------------------------------------------------------------
 
-void ThumbnailCache::initialize(const std::filesystem::path& cache_dir,
-                                 ID3D11Device* device)
+void ThumbnailCache::initialize(Database* db, ID3D11Device* device)
 {
-    cache_dir_ = cache_dir;
+    db_ = db;
     device_ = device;
-
-    // Ensure cache directory exists
-    std::error_code ec;
-    std::filesystem::create_directories(cache_dir_, ec);
-    if (ec) {
-        VEGA_LOG_WARN("ThumbnailCache::initialize – failed to create cache dir: {}",
-                      ec.message());
-    }
-
-    // COM should already be initialized by the application (STA for UI thread)
-
-    VEGA_LOG_INFO("ThumbnailCache::initialize – cache dir: {}", cache_dir_.string());
+    VEGA_LOG_INFO("ThumbnailCache: initialized (DB-backed)");
 }
 
 ID3D11ShaderResourceView* ThumbnailCache::getThumbnail(
     const std::string& uuid,
     const std::filesystem::path& raw_path,
-    Level level)
+    Level level,
+    int orientation)
 {
-    std::string key = uuid + levelSuffix(level);
+    std::string key = cacheKey(uuid, level);
 
     // 1. Check memory cache
     auto it = memory_cache_.find(key);
@@ -172,39 +180,47 @@ ID3D11ShaderResourceView* ThumbnailCache::getThumbnail(
         return it->second.srv.Get();
     }
 
-    // 2. Check disk cache
-    auto disk_file = diskPath(uuid, level);
-    if (std::filesystem::exists(disk_file)) {
-        if (loadFromDisk(key, disk_file)) {
-            return memory_cache_[key].srv.Get();
+    // 2. Check database
+    if (db_) {
+        auto jpeg_data = db_->loadThumbnail(uuid, static_cast<int>(level));
+        if (!jpeg_data.empty()) {
+            auto srv = createSRVFromJpeg(device_, jpeg_data, orientation);
+            if (srv) {
+                if (memory_cache_.size() >= MAX_MEMORY_ENTRIES) evictOldest();
+                CacheEntry entry;
+                entry.srv = srv;
+                entry.last_access = currentTimestamp();
+                memory_cache_[key] = std::move(entry);
+                return memory_cache_[key].srv.Get();
+            }
         }
     }
 
-    // 3. Generate: extract thumbnail from RAW file
+    // 3. Extract thumbnail from RAW file
     auto thumb_result = RawDecoder::extractThumbnail(raw_path);
     if (!thumb_result) {
-        VEGA_LOG_WARN("ThumbnailCache::getThumbnail – failed to extract thumbnail for {}",
+        VEGA_LOG_WARN("ThumbnailCache: failed to extract thumbnail for {}",
                       raw_path.filename().string());
         return nullptr;
     }
 
     const auto& jpeg_data = thumb_result.value();
 
-    // Save to disk for future use
-    saveToDisk(jpeg_data, disk_file);
+    // Save to database
+    if (db_) {
+        db_->saveThumbnail(uuid, static_cast<int>(level),
+                           jpeg_data.data(), jpeg_data.size());
+    }
 
-    // Decode to GPU texture
-    auto srv = createSRVFromJpeg(device_, jpeg_data);
+    // Decode to GPU texture with orientation
+    auto srv = createSRVFromJpeg(device_, jpeg_data, orientation);
     if (!srv) {
-        VEGA_LOG_WARN("ThumbnailCache::getThumbnail – failed to create SRV for {}",
+        VEGA_LOG_WARN("ThumbnailCache: failed to create SRV for {}",
                       raw_path.filename().string());
         return nullptr;
     }
 
-    // Evict if at capacity
-    if (memory_cache_.size() >= MAX_MEMORY_ENTRIES) {
-        evictOldest();
-    }
+    if (memory_cache_.size() >= MAX_MEMORY_ENTRIES) evictOldest();
 
     CacheEntry entry;
     entry.srv = srv;
@@ -214,88 +230,20 @@ ID3D11ShaderResourceView* ThumbnailCache::getThumbnail(
     return memory_cache_[key].srv.Get();
 }
 
-void ThumbnailCache::generateAsync(const std::string& uuid,
-                                    const std::filesystem::path& raw_path)
-{
-    // For now, do synchronous generation of the Small level.
-    // A full implementation would dispatch to a background thread.
-    // We pre-generate the most commonly needed level.
-    getThumbnail(uuid, raw_path, Level::Small);
-}
-
 void ThumbnailCache::clear()
 {
     memory_cache_.clear();
-    VEGA_LOG_INFO("ThumbnailCache::clear – memory cache cleared");
+    VEGA_LOG_INFO("ThumbnailCache: memory cache cleared");
 }
 
 // ---------------------------------------------------------------------------
-// Private helpers
+// Private
 // ---------------------------------------------------------------------------
-
-std::filesystem::path ThumbnailCache::diskPath(const std::string& uuid, Level level)
-{
-    // Store thumbnails in sub-directories based on first 2 chars of UUID
-    // to avoid having too many files in one directory.
-    std::string subdir = uuid.size() >= 2 ? uuid.substr(0, 2) : "00";
-    auto dir = cache_dir_ / subdir;
-
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-
-    return dir / (uuid + levelSuffix(level) + ".jpg");
-}
-
-bool ThumbnailCache::loadFromDisk(const std::string& key,
-                                   const std::filesystem::path& path)
-{
-    // Read JPEG from disk
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return false;
-
-    auto size = file.tellg();
-    if (size <= 0) return false;
-
-    file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> data(static_cast<size_t>(size));
-    if (!file.read(reinterpret_cast<char*>(data.data()), size)) return false;
-
-    // Decode to texture
-    auto srv = createSRVFromJpeg(device_, data);
-    if (!srv) return false;
-
-    // Evict if needed
-    if (memory_cache_.size() >= MAX_MEMORY_ENTRIES) {
-        evictOldest();
-    }
-
-    CacheEntry entry;
-    entry.srv = srv;
-    entry.last_access = currentTimestamp();
-    memory_cache_[key] = std::move(entry);
-
-    return true;
-}
-
-bool ThumbnailCache::saveToDisk(const std::vector<uint8_t>& jpeg_data,
-                                 const std::filesystem::path& path)
-{
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        VEGA_LOG_WARN("ThumbnailCache::saveToDisk – failed to open: {}", path.string());
-        return false;
-    }
-
-    file.write(reinterpret_cast<const char*>(jpeg_data.data()),
-               static_cast<std::streamsize>(jpeg_data.size()));
-    return file.good();
-}
 
 void ThumbnailCache::evictOldest()
 {
     if (memory_cache_.empty()) return;
 
-    // Find the entry with the oldest last_access timestamp
     auto oldest = memory_cache_.begin();
     for (auto it = memory_cache_.begin(); it != memory_cache_.end(); ++it) {
         if (it->second.last_access < oldest->second.last_access) {

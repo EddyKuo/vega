@@ -620,27 +620,36 @@ void GPUPipeline::loadShaders()
     ID3D11Device* device = ctx_->device();
 
     auto tryLoad = [&](ComputeShader& shader, const char* filename) {
+        // Derive CSO name from HLSL filename (e.g. "tone_curve.hlsl" -> "tone_curve.cso")
+        std::string base = std::filesystem::path(filename).stem().string();
+        auto cso = dir / (base + ".cso");
         auto hlsl = dir / filename;
+
+        // Prefer precompiled CSO (faster load, no d3dcompiler dependency)
+        if (std::filesystem::exists(cso)) {
+            if (!shader.loadFromCSO(device, cso)) {
+                VEGA_LOG_WARN("GPUPipeline: failed to load CSO {}", cso.string());
+            } else {
+                VEGA_LOG_INFO("GPUPipeline: loaded shader CSO '{}'", cso.string());
+                return;
+            }
+        }
+
+#ifdef _DEBUG
+        // Debug fallback: compile from HLSL source for live editing
         if (std::filesystem::exists(hlsl)) {
             if (!shader.compileFromFile(device, hlsl)) {
                 VEGA_LOG_WARN("GPUPipeline: failed to compile {}: {}",
                               filename, shader.lastError());
             } else {
-                VEGA_LOG_INFO("GPUPipeline: loaded shader '{}'", filename);
+                VEGA_LOG_INFO("GPUPipeline: compiled shader '{}'", filename);
             }
-        } else {
-            // Also try .cso (pre-compiled)
-            auto cso = dir / (std::string(filename) + ".cso");
-            if (std::filesystem::exists(cso)) {
-                if (!shader.loadFromCSO(device, cso)) {
-                    VEGA_LOG_WARN("GPUPipeline: failed to load CSO {}", cso.string());
-                } else {
-                    VEGA_LOG_INFO("GPUPipeline: loaded shader CSO '{}'", cso.string());
-                }
-            } else {
-                VEGA_LOG_WARN("GPUPipeline: shader not found: {}", hlsl.string());
-            }
+            return;
         }
+#endif
+
+        VEGA_LOG_WARN("GPUPipeline: shader not found: {} (looked for {})",
+                      cso.string(), hlsl.string());
     };
 
     tryLoad(wb_exposure_shader_, "white_balance_exposure.hlsl");

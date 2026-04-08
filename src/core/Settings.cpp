@@ -64,6 +64,7 @@ AppSettings AppSettings::load()
             for (const auto& f : j["library_folders"])
                 settings.library_folders.push_back(f.get<std::string>());
         }
+        if (j.contains("selected_folder")) settings.selected_folder = j["selected_folder"].get<std::string>();
 
         VEGA_LOG_INFO("Settings loaded from {}", path.string());
     }
@@ -129,6 +130,7 @@ void AppSettings::save() const
     j["library_folders"] = nlohmann::json::array();
     for (const auto& f : library_folders)
         j["library_folders"].push_back(f);
+    j["selected_folder"] = selected_folder;
 
     std::ofstream ofs(path);
     if (!ofs.is_open())
