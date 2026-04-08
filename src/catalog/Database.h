@@ -66,9 +66,16 @@ public:
     };
     std::vector<PhotoRecord> filter(const FilterCriteria& criteria);
 
+    // Thumbnails (stored as JPEG BLOBs)
+    bool saveThumbnail(const std::string& uuid, int level,
+                       const void* jpeg_data, size_t jpeg_size);
+    std::vector<uint8_t> loadThumbnail(const std::string& uuid, int level);
+
     // Stats
     int64_t photoCount();
     int64_t countByFolder(const std::string& folder_path);
+
+    sqlite3* handle() const { return db_; }
 
 private:
     sqlite3* db_ = nullptr;

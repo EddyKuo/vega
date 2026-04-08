@@ -118,6 +118,18 @@ bool Database::createTables()
     if (!exec("CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating);"))
         return false;
 
+    // Thumbnails table (JPEG BLOBs)
+    const char* thumbnails_sql = R"SQL(
+        CREATE TABLE IF NOT EXISTS thumbnails (
+            uuid    TEXT NOT NULL,
+            level   INTEGER NOT NULL,
+            data    BLOB NOT NULL,
+            PRIMARY KEY (uuid, level)
+        );
+    )SQL";
+
+    if (!exec(thumbnails_sql)) return false;
+
     // Tags table
     const char* tags_sql = R"SQL(
         CREATE TABLE IF NOT EXISTS tags (
@@ -749,6 +761,59 @@ int64_t Database::countByFolder(const std::string& folder_path)
 
     sqlite3_finalize(stmt);
     return count;
+}
+
+// ---------------------------------------------------------------------------
+// Thumbnails
+// ---------------------------------------------------------------------------
+
+bool Database::saveThumbnail(const std::string& uuid, int level,
+                              const void* jpeg_data, size_t jpeg_size)
+{
+    if (!db_ || !jpeg_data || jpeg_size == 0) return false;
+
+    const char* sql =
+        "INSERT OR REPLACE INTO thumbnails (uuid, level, data) VALUES (?, ?, ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        VEGA_LOG_ERROR("Database::saveThumbnail – prepare failed: {}", sqlite3_errmsg(db_));
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, uuid.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, level);
+    sqlite3_bind_blob(stmt, 3, jpeg_data, static_cast<int>(jpeg_size), SQLITE_TRANSIENT);
+
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+std::vector<uint8_t> Database::loadThumbnail(const std::string& uuid, int level)
+{
+    std::vector<uint8_t> result;
+    if (!db_) return result;
+
+    const char* sql = "SELECT data FROM thumbnails WHERE uuid = ? AND level = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
+
+    sqlite3_bind_text(stmt, 1, uuid.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, level);
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const void* blob = sqlite3_column_blob(stmt, 0);
+        int blob_size = sqlite3_column_bytes(stmt, 0);
+        if (blob && blob_size > 0) {
+            result.resize(static_cast<size_t>(blob_size));
+            std::memcpy(result.data(), blob, result.size());
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
 }
 
 } // namespace vega
