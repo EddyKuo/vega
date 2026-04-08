@@ -19,8 +19,7 @@ public:
     ID3D11ShaderResourceView* process(const RawImage& raw, const EditRecipe& recipe,
                                        float preview_scale = 1.0f);
 
-    // Upload demosaiced linear RGB data to GPU (call once when image changes).
-    // Internally demosaics+WB+color-transforms on CPU, then uploads the float3 result.
+    // Upload raw bayer data to GPU and run GPU demosaic.
     void uploadRawData(const RawImage& raw);
 
     bool isInitialized() const { return initialized_; }
@@ -35,6 +34,7 @@ private:
     bool initialized_ = false;
 
     // ── Shaders ──
+    ComputeShader demosaic_shader_;
     ComputeShader wb_exposure_shader_;
     ComputeShader tone_curve_shader_;
     ComputeShader hsl_shader_;
@@ -45,11 +45,28 @@ private:
     // it would be used separately for histogram computation.
     ComputeShader histogram_shader_;
 
-    // ── Raw data on GPU ──
+    // ── Raw bayer data on GPU (single-channel float) ──
+    ComPtr<ID3D11Texture2D>          bayer_texture_;
+    ComPtr<ID3D11ShaderResourceView> bayer_srv_;
+
+    // ── Demosaiced linear RGB on GPU ──
     ComPtr<ID3D11Texture2D>          raw_texture_;
     ComPtr<ID3D11ShaderResourceView> raw_srv_;
+    ComPtr<ID3D11UnorderedAccessView> raw_uav_;
     uint32_t raw_width_  = 0;
     uint32_t raw_height_ = 0;
+
+    // ── Demosaic CB ──
+    struct DemosaicCB {
+        uint32_t width, height, bayer_pattern;
+        float pad0;
+        float wb_r, wb_g, wb_b;
+        float pad1;
+        float color_row0[4];
+        float color_row1[4];
+        float color_row2[4];
+    };
+    ConstantBuffer<DemosaicCB> demosaic_cb_;
 
     // ── Output (last rendered result, kept alive for display) ──
     TexturePool::TextureHandle output_;
