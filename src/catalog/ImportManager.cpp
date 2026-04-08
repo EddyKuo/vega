@@ -26,7 +26,7 @@ namespace vega {
 /// Generate a UUID v4 string (lowercase hex with dashes).
 static std::string generateUUID()
 {
-    static std::mt19937_64 rng(std::random_device{}());
+    thread_local std::mt19937_64 rng(std::random_device{}());
 
     std::uniform_int_distribution<uint64_t> dist;
     uint64_t hi = dist(rng);

@@ -34,6 +34,10 @@ bool GPUPipeline::initialize(D3D11Context& ctx)
     pool_ = std::make_unique<TexturePool>(device);
 
     // Create constant buffers
+    if (!demosaic_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create Demosaic constant buffer");
+        return false;
+    }
     if (!wb_exp_cb_.create(device)) {
         VEGA_LOG_ERROR("GPUPipeline: failed to create WBExposure constant buffer");
         return false;
@@ -98,187 +102,130 @@ void GPUPipeline::uploadRawData(const RawImage& raw)
     }
 
     Timer timer;
-
+    ID3D11Device* device = ctx_->device();
+    ID3D11DeviceContext* dc = ctx_->context();
     uint32_t width  = raw.width;
     uint32_t height = raw.height;
-    uint32_t pixel_count = width * height;
 
-    // ── Step 1: Demosaic on CPU to get linear RGB float buffer ──
-    // This replicates Pipeline::demosaicAndTransform so we get linear sRGB float3.
-    std::vector<float> rgb(static_cast<size_t>(pixel_count) * 3);
-
-    // Bayer demosaic (bilinear)
+    // ── Step 1: Upload raw bayer data as single-channel R32_FLOAT texture ──
     {
-        static constexpr int bayerTable[4][4] = {
-            {0, 1, 1, 2},  // RGGB
-            {2, 1, 1, 0},  // BGGR
-            {1, 0, 2, 1},  // GRBG
-            {1, 2, 0, 1},  // GBRG
-        };
+        bayer_texture_.Reset();
+        bayer_srv_.Reset();
 
-        auto bayerChannel = [&](uint32_t pattern, int row, int col) -> int {
-            uint32_t p = pattern < 4 ? pattern : 0;
-            return bayerTable[p][(row & 1) * 2 + (col & 1)];
-        };
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width      = width;
+        desc.Height     = height;
+        desc.MipLevels  = 1;
+        desc.ArraySize  = 1;
+        desc.Format     = DXGI_FORMAT_R32_FLOAT;
+        desc.SampleDesc = {1, 0};
+        desc.Usage      = D3D11_USAGE_DEFAULT;
+        desc.BindFlags  = D3D11_BIND_SHADER_RESOURCE;
 
-        auto clampCoord = [](int v, int maxVal) -> int {
-            return v < 0 ? 0 : (v >= maxVal ? maxVal - 1 : v);
-        };
+        D3D11_SUBRESOURCE_DATA init{};
+        init.pSysMem     = raw.bayer_data.data();
+        init.SysMemPitch = width * sizeof(float);
 
-        const float* bayer = raw.bayer_data.data();
-        int w = static_cast<int>(width);
-        int h = static_cast<int>(height);
-        uint32_t pattern = raw.metadata.bayer_pattern;
-
-        // Pre-compute WB multipliers (applied BEFORE demosaic, same as CPU pipeline)
-        float wb_mul[3];
-        {
-            float g_norm = (raw.wb_multipliers[1] + raw.wb_multipliers[3]) * 0.5f;
-            if (g_norm <= 0.0f) g_norm = 1.0f;
-            wb_mul[0] = raw.wb_multipliers[0] / g_norm;
-            wb_mul[1] = 1.0f;
-            wb_mul[2] = raw.wb_multipliers[2] / g_norm;
+        HRESULT hr = device->CreateTexture2D(&desc, &init, &bayer_texture_);
+        if (FAILED(hr)) {
+            VEGA_LOG_ERROR("GPUPipeline: failed to create bayer texture: 0x{:08X}",
+                           static_cast<uint32_t>(hr));
+            return;
         }
 
-        auto sample = [&](int r, int c) -> float {
-            r = clampCoord(r, h);
-            c = clampCoord(c, w);
-            float val = bayer[r * w + c];
-            int ch = bayerChannel(pattern, r, c);
-            return val * wb_mul[ch];  // WB baked into sample, before interpolation
-        };
-
-        for (int r = 0; r < h; ++r) {
-            for (int c = 0; c < w; ++c) {
-                int ch = bayerChannel(pattern, r, c);
-                float center = sample(r, c);
-                float R, G, B;
-
-                if (ch == 0) {
-                    R = center;
-                    G = (sample(r-1, c) + sample(r+1, c) +
-                         sample(r, c-1) + sample(r, c+1)) * 0.25f;
-                    B = (sample(r-1, c-1) + sample(r-1, c+1) +
-                         sample(r+1, c-1) + sample(r+1, c+1)) * 0.25f;
-                } else if (ch == 2) {
-                    B = center;
-                    G = (sample(r-1, c) + sample(r+1, c) +
-                         sample(r, c-1) + sample(r, c+1)) * 0.25f;
-                    R = (sample(r-1, c-1) + sample(r-1, c+1) +
-                         sample(r+1, c-1) + sample(r+1, c+1)) * 0.25f;
-                } else {
-                    G = center;
-                    int chUp   = bayerChannel(pattern, r-1, c);
-
-                    if (chUp == 0) {
-                        R = (sample(r-1, c) + sample(r+1, c)) * 0.5f;
-                        B = (sample(r, c-1) + sample(r, c+1)) * 0.5f;
-                    } else if (chUp == 2) {
-                        B = (sample(r-1, c) + sample(r+1, c)) * 0.5f;
-                        R = (sample(r, c-1) + sample(r, c+1)) * 0.5f;
-                    } else {
-                        int chLeft = bayerChannel(pattern, r, c-1);
-                        if (chLeft == 0) {
-                            R = (sample(r, c-1) + sample(r, c+1)) * 0.5f;
-                            B = (sample(r-1, c) + sample(r+1, c)) * 0.5f;
-                        } else {
-                            B = (sample(r, c-1) + sample(r, c+1)) * 0.5f;
-                            R = (sample(r-1, c) + sample(r+1, c)) * 0.5f;
-                        }
-                    }
-                }
-
-                size_t idx = (static_cast<size_t>(r) * width + c) * 3;
-                rgb[idx + 0] = R;
-                rgb[idx + 1] = G;
-                rgb[idx + 2] = B;
-            }
+        hr = device->CreateShaderResourceView(bayer_texture_.Get(), nullptr, &bayer_srv_);
+        if (FAILED(hr)) {
+            VEGA_LOG_ERROR("GPUPipeline: failed to create bayer SRV");
+            bayer_texture_.Reset();
+            return;
         }
     }
 
-    // Camera WB is already applied per-pixel in sample() above.
+    VEGA_LOG_INFO("GPUPipeline: bayer upload: {:.1f}ms", timer.elapsed_ms());
 
-    // Apply camera color matrix (rgb_cam: camera -> sRGB directly)
-    {
-        const float* M = raw.color_matrix;
-        bool has_matrix = false;
-        for (int i = 0; i < 9; ++i) {
-            if (M[i] != 0.0f) { has_matrix = true; break; }
-        }
-
-        if (has_matrix) {
-            for (uint32_t i = 0; i < pixel_count; ++i) {
-                float* p = rgb.data() + i * 3;
-                float in_r = p[0], in_g = p[1], in_b = p[2];
-                p[0] = M[0] * in_r + M[1] * in_g + M[2] * in_b;
-                p[1] = M[3] * in_r + M[4] * in_g + M[5] * in_b;
-                p[2] = M[6] * in_r + M[7] * in_g + M[8] * in_b;
-            }
-        }
-    }
-
-    VEGA_LOG_INFO("GPUPipeline: CPU demosaic+color transform: {:.1f}ms", timer.elapsed_ms());
-
-    // ── Step 2: Upload linear RGB to GPU texture ──
-    // We pack RGB into RGBA (A=1.0) for GPU-friendly alignment.
-    std::vector<float> rgba(static_cast<size_t>(pixel_count) * 4);
-    for (uint32_t i = 0; i < pixel_count; ++i) {
-        rgba[i * 4 + 0] = rgb[i * 3 + 0];
-        rgba[i * 4 + 1] = rgb[i * 3 + 1];
-        rgba[i * 4 + 2] = rgb[i * 3 + 2];
-        rgba[i * 4 + 3] = 1.0f;
-    }
-
-    // Release old raw texture if dimensions changed
+    // ── Step 2: Create output RGBA texture for demosaiced result ──
     if (raw_width_ != width || raw_height_ != height) {
         raw_texture_.Reset();
         raw_srv_.Reset();
+        raw_uav_.Reset();
     }
 
-    // Create a staging texture and upload
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width      = width;
-    desc.Height     = height;
-    desc.MipLevels  = 1;
-    desc.ArraySize  = 1;
-    desc.Format     = DXGI_FORMAT_R32G32B32A32_FLOAT;
-    desc.SampleDesc = { 1, 0 };
-    desc.Usage      = D3D11_USAGE_DEFAULT;
-    desc.BindFlags  = D3D11_BIND_SHADER_RESOURCE;
+    if (!raw_texture_) {
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width      = width;
+        desc.Height     = height;
+        desc.MipLevels  = 1;
+        desc.ArraySize  = 1;
+        desc.Format     = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        desc.SampleDesc = {1, 0};
+        desc.Usage      = D3D11_USAGE_DEFAULT;
+        desc.BindFlags  = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-    D3D11_SUBRESOURCE_DATA init_data{};
-    init_data.pSysMem     = rgba.data();
-    init_data.SysMemPitch = width * 4 * sizeof(float);
+        HRESULT hr = device->CreateTexture2D(&desc, nullptr, &raw_texture_);
+        if (FAILED(hr)) {
+            VEGA_LOG_ERROR("GPUPipeline: failed to create demosaic output texture");
+            return;
+        }
 
-    ID3D11Device* device = ctx_->device();
-    HRESULT hr = device->CreateTexture2D(&desc, &init_data, &raw_texture_);
-    if (FAILED(hr)) {
-        VEGA_LOG_ERROR("GPUPipeline: failed to create raw texture: 0x{:08X}",
-                       static_cast<uint32_t>(hr));
-        return;
-    }
+        hr = device->CreateShaderResourceView(raw_texture_.Get(), nullptr, &raw_srv_);
+        if (FAILED(hr)) { raw_texture_.Reset(); return; }
 
-    // Create SRV for the raw texture
-    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
-    srv_desc.Format                    = DXGI_FORMAT_R32G32B32A32_FLOAT;
-    srv_desc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srv_desc.Texture2D.MostDetailedMip = 0;
-    srv_desc.Texture2D.MipLevels       = 1;
-
-    hr = device->CreateShaderResourceView(raw_texture_.Get(), &srv_desc, &raw_srv_);
-    if (FAILED(hr)) {
-        VEGA_LOG_ERROR("GPUPipeline: failed to create raw SRV: 0x{:08X}",
-                       static_cast<uint32_t>(hr));
-        raw_texture_.Reset();
-        return;
+        hr = device->CreateUnorderedAccessView(raw_texture_.Get(), nullptr, &raw_uav_);
+        if (FAILED(hr)) { raw_texture_.Reset(); raw_srv_.Reset(); return; }
     }
 
     raw_width_  = width;
     raw_height_ = height;
 
-    VEGA_LOG_INFO("GPUPipeline: uploaded raw data ({}x{}) to GPU, total: {:.1f}ms",
-                  width, height, timer.elapsed_ms());
+    // ── Step 3: Run GPU demosaic shader ──
+    if (demosaic_shader_.isValid()) {
+        DemosaicCB cb{};
+        cb.width = width;
+        cb.height = height;
+        cb.bayer_pattern = raw.metadata.bayer_pattern;
+
+        float g_norm = (raw.wb_multipliers[1] + raw.wb_multipliers[3]) * 0.5f;
+        if (g_norm <= 0.0f) g_norm = 1.0f;
+        cb.wb_r = raw.wb_multipliers[0] / g_norm;
+        cb.wb_g = 1.0f;
+        cb.wb_b = raw.wb_multipliers[2] / g_norm;
+
+        const float* M = raw.color_matrix;
+        cb.color_row0[0] = M[0]; cb.color_row0[1] = M[1]; cb.color_row0[2] = M[2]; cb.color_row0[3] = 0;
+        cb.color_row1[0] = M[3]; cb.color_row1[1] = M[4]; cb.color_row1[2] = M[5]; cb.color_row1[3] = 0;
+        cb.color_row2[0] = M[6]; cb.color_row2[1] = M[7]; cb.color_row2[2] = M[8]; cb.color_row2[3] = 0;
+
+        demosaic_cb_.update(dc, cb);
+        demosaic_cb_.bindCS(dc, 0);
+
+        ID3D11ShaderResourceView* srvs[] = { bayer_srv_.Get() };
+        dc->CSSetShaderResources(0, 1, srvs);
+
+        ID3D11UnorderedAccessView* uavs[] = { raw_uav_.Get() };
+        dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+        static constexpr uint32_t TILE = 16;
+        uint32_t gx = (width + TILE - 1) / TILE;
+        uint32_t gy = (height + TILE - 1) / TILE;
+        demosaic_shader_.bind(dc);
+        demosaic_shader_.dispatch(dc, gx, gy, 1);
+
+        // Unbind
+        ID3D11ShaderResourceView* null_srv[] = { nullptr };
+        dc->CSSetShaderResources(0, 1, null_srv);
+        ID3D11UnorderedAccessView* null_uav[] = { nullptr };
+        dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
+
+        VEGA_LOG_INFO("GPUPipeline: GPU demosaic + upload total: {:.1f}ms ({}x{})",
+                      timer.elapsed_ms(), width, height);
+    } else {
+        VEGA_LOG_ERROR("GPUPipeline: demosaic shader not available");
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Two-phase upload: CPU demosaic (thread-safe) + GPU upload (main thread)
+// ---------------------------------------------------------------------------
 
 ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
                                                 const EditRecipe& recipe,
@@ -346,8 +293,16 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
     // ──────────────────────────────────────────────────────────────────────
     {
         WBExposureCB cb{};
-        temperatureTintToRGB(recipe.wb_temperature, recipe.wb_tint,
-                             cb.wb_r, cb.wb_g, cb.wb_b);
+        // Relative WB correction: user / default, matching CPU WhiteBalanceNode
+        static constexpr float DEFAULT_TEMP = 5500.0f;
+        static constexpr float DEFAULT_TINT = 0.0f;
+        float def_r, def_g, def_b;
+        temperatureTintToRGB(DEFAULT_TEMP, DEFAULT_TINT, def_r, def_g, def_b);
+        float usr_r, usr_g, usr_b;
+        temperatureTintToRGB(recipe.wb_temperature, recipe.wb_tint, usr_r, usr_g, usr_b);
+        cb.wb_r = usr_r / def_r;
+        cb.wb_g = usr_g / def_g;
+        cb.wb_b = usr_b / def_b;
         cb.exposure   = recipe.exposure;
         cb.contrast   = recipe.contrast;
         cb.highlights = recipe.highlights;
@@ -652,6 +607,7 @@ void GPUPipeline::loadShaders()
                       cso.string(), hlsl.string());
     };
 
+    tryLoad(demosaic_shader_,    "demosaic.hlsl");
     tryLoad(wb_exposure_shader_, "white_balance_exposure.hlsl");
     tryLoad(tone_curve_shader_,  "tone_curve.hlsl");
     tryLoad(hsl_shader_,         "hsl_adjust.hlsl");

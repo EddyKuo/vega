@@ -3,9 +3,20 @@
 
 #include <sqlite3.h>
 #include <sstream>
-#include <cassert>
+#include <algorithm>
+#include <cstring>
 
 namespace vega {
+
+// Normalize path separators to backslash and ensure trailing separator
+static std::string normalizeFolderPrefix(const std::string& folder_path)
+{
+    std::string prefix = folder_path;
+    std::replace(prefix.begin(), prefix.end(), '/', '\\');
+    if (!prefix.empty() && prefix.back() != '\\')
+        prefix += '\\';
+    return prefix;
+}
 
 // ---------------------------------------------------------------------------
 // open / close / isOpen
@@ -29,7 +40,9 @@ bool Database::open(const std::filesystem::path& catalog_path)
         }
     }
 
-    int rc = sqlite3_open(catalog_path.string().c_str(), &db_);
+    int rc = sqlite3_open_v2(catalog_path.string().c_str(), &db_,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+        nullptr);
     if (rc != SQLITE_OK) {
         VEGA_LOG_ERROR("Database::open – sqlite3_open failed: {}", sqlite3_errmsg(db_));
         sqlite3_close(db_);
@@ -205,7 +218,10 @@ bool Database::createTables()
 
 bool Database::exec(const std::string& sql)
 {
-    assert(db_);
+    if (!db_) {
+        VEGA_LOG_ERROR("Database::exec called with null db handle");
+        return false;
+    }
     char* errmsg = nullptr;
     int rc = sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &errmsg);
     if (rc != SQLITE_OK) {
@@ -637,9 +653,7 @@ std::vector<PhotoRecord> Database::filter(const FilterCriteria& criteria)
         } else {
             use_fts = false;
         }
-        if (!use_fts) {
-            // Fallback: use LIKE on file_name
-        }
+        // use_fts remains false — fallback to LIKE below
     }
 
     std::ostringstream sql;
@@ -665,11 +679,7 @@ std::vector<PhotoRecord> Database::filter(const FilterCriteria& criteria)
     }
     if (!criteria.folder_path.empty()) {
         sql << " AND file_path LIKE ?";
-        std::string prefix = criteria.folder_path;
-        char last = prefix.back();
-        if (last != '\\' && last != '/')
-            prefix += '\\';
-        text_binds.push_back(prefix + "%");
+        text_binds.push_back(normalizeFolderPrefix(criteria.folder_path) + "%");
     }
     if (!criteria.camera_model.empty()) {
         sql << " AND camera_model = ?";
@@ -690,6 +700,10 @@ std::vector<PhotoRecord> Database::filter(const FilterCriteria& criteria)
     if (use_fts) {
         sql << " AND photos_fts MATCH ?";
         text_binds.push_back(criteria.search_text);
+    } else if (!criteria.search_text.empty()) {
+        // FTS5 not available — fallback to LIKE on file_name
+        sql << " AND file_name LIKE ?";
+        text_binds.push_back("%" + criteria.search_text + "%");
     }
 
     sql << " ORDER BY datetime_taken DESC;";
@@ -741,11 +755,7 @@ int64_t Database::countByFolder(const std::string& folder_path)
 {
     if (!db_ || folder_path.empty()) return 0;
 
-    // Ensure folder path ends with separator for precise prefix matching
-    std::string prefix = folder_path;
-    char last = prefix.back();
-    if (last != '\\' && last != '/')
-        prefix += '\\';
+    std::string prefix = normalizeFolderPrefix(folder_path);
 
     const char* sql = "SELECT COUNT(*) FROM photos WHERE file_path LIKE ?;";
     sqlite3_stmt* stmt = nullptr;

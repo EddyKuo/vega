@@ -20,11 +20,12 @@ add_library(vega_core STATIC
     core/Timer.cpp
     core/CrashHandler.cpp
     core/Settings.cpp
+    core/UIStateDB.cpp
     core/WindowsIntegration.cpp
     core/i18n.cpp
 )
 target_include_directories(vega_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(vega_core PUBLIC spdlog::spdlog nlohmann_json::nlohmann_json dwmapi)
+target_link_libraries(vega_core PUBLIC spdlog::spdlog nlohmann_json::nlohmann_json unofficial::sqlite3::sqlite3 dwmapi)
 
 # ── GPU ──
 add_library(vega_gpu STATIC
@@ -129,6 +130,7 @@ if(FXC_EXECUTABLE)
     file(MAKE_DIRECTORY ${SHADER_OUTPUT_DIR})
 
     set(VEGA_HLSL_SHADERS
+        demosaic.hlsl
         white_balance_exposure.hlsl
         tone_curve.hlsl
         hsl_adjust.hlsl
