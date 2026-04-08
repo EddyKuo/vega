@@ -29,8 +29,9 @@ Vega 是一款 Windows 原生的 RAW 照片編輯器，以 C++20 和 DirectX 11 
 - sRGB gamma 輸出
 
 ### GPU 加速
-- 7 個 HLSL Compute Shader（cs_5_0），Build time 預編譯為 CSO bytecode
-- 6-pass GPU 處理管線：WB+曝光 -> 色調曲線 -> HSL -> 降噪 -> 銳化 -> Gamma
+- 8 個 HLSL Compute Shader（cs_5_0），Build time 預編譯為 CSO bytecode
+- GPU Bayer Demosaic：直接上傳 RAW bayer 資料，GPU 完成去馬賽克 + 白平衡 + 色彩矩陣（~5ms，取代 CPU ~500ms）
+- 7-pass GPU 處理管線：Demosaic -> WB+曝光 -> 色調曲線 -> HSL -> 降噪 -> 銳化 -> Gamma
 - RTX 3090 上全解析度處理 < 50ms
 - 自動 CPU fallback（GPU 不可用時無縫切換）
 - Release 發佈不含 HLSL 原始碼，僅帶預編譯 .cso
@@ -56,8 +57,8 @@ Vega 是一款 Windows 原生的 RAW 照片編輯器，以 C++20 和 DirectX 11 
 - 非同步匯出（不阻塞 UI）
 
 ### 系統整合
-- 視窗位置 / 大小 / 最大化狀態記憶（%APPDATA%/Vega/settings.json）
-- 照片庫資料夾清單持久化（重啟後自動恢復）
+- SQLite UI 狀態資料庫（ui_state.db）：視窗位置、語言、資料夾清單、ImGui 佈局統一持久化
+- 多執行緒安全：FULLMUTEX SQLite、thread_local RNG、joinable 背景執行緒
 - Windows 暗色標題列
 - 檔案拖放開啟 RAW 檔
 - 高 DPI 支援（Per-Monitor DPI Aware V2）
@@ -144,7 +145,8 @@ vega/
 │   ├── core/                       # 核心工具
 │   │   ├── Logger.h/.cpp           # spdlog 封裝
 │   │   ├── Timer.h/.cpp            # QPC 高精度計時器
-│   │   ├── Settings.h/.cpp         # 應用程式設定 (JSON)
+│   │   ├── Settings.h/.cpp         # 應用程式設定（JSON 遷移用）
+│   │   ├── UIStateDB.h/.cpp        # SQLite UI 狀態持久化（取代 settings.json）
 │   │   ├── CrashHandler.h/.cpp     # MiniDump crash handler
 │   │   ├── WindowsIntegration.h/.cpp # 暗色標題列、拖放、DPI
 │   │   ├── i18n.h/.cpp             # 中英文國際化
@@ -196,7 +198,8 @@ vega/
 │       └── ExportManager.h/.cpp    # JPEG/PNG/TIFF 匯出
 ├── shaders/                        # HLSL Compute Shaders（Build time 編譯為 .cso）
 │   ├── common.hlsli                # 共用函式（LinearToSRGB, RGBToHSL...）
-│   ├── white_balance_exposure.hlsl # WB + 曝光 + 對比 + 亮暗部
+│   ├── demosaic.hlsl               # GPU Bayer 去馬賽克 + WB + 色彩矩陣
+│   ├── white_balance_exposure.hlsl # WB 相對修正 + 曝光 + 對比 + 亮暗部
 │   ├── tone_curve.hlsl             # 1D LUT 色調曲線
 │   ├── hsl_adjust.hlsl             # HSL 8 通道 + vibrance
 │   ├── denoise.hlsl                # bilateral 降噪
@@ -277,7 +280,7 @@ vega/
 
 | 路徑 | 用途 | 格式 |
 |------|------|------|
-| `%APPDATA%/Vega/settings.json` | 應用程式設定、資料夾清單、上次選取資料夾 | JSON |
+| `<exe同目錄>/ui_state.db` | UI 狀態（視窗位置、語言、資料夾清單、ImGui 佈局） | SQLite 3 |
 | `<exe同目錄>/catalog.db` | 照片資料庫（元資料、評分、標籤、縮圖 BLOB） | SQLite 3 |
 | `<RAW檔同目錄>/<檔名>.vgr` | 編輯參數（sidecar） | UTF-8 JSON |
 
