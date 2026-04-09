@@ -169,10 +169,15 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
 
 bool DevelopPanel::renderCrop(EditRecipe& recipe)
 {
-    if (!ImGui::CollapsingHeader(tr(S::CROP_HEADER)))
-        return false;
+    bool header_open = ImGui::CollapsingHeader(tr(S::CROP_HEADER));
 
-    // Enter edit mode when section is first opened
+    if (!header_open) {
+        // Header collapsed — exit edit mode, clear overlay
+        if (crop_editing_) crop_editing_ = false;
+        return false;
+    }
+
+    // Enter edit mode only when transitioning from closed to open
     if (!crop_editing_) {
         crop_editing_ = true;
         pending_crop_left   = recipe.crop_left;
@@ -240,6 +245,8 @@ bool DevelopPanel::renderCrop(EditRecipe& recipe)
         recipe.rotation    = pending_rotation;
         crop_editing_ = false;
         crop_apply_requested = true;
+        // Collapse the header so we don't re-enter edit mode
+        ImGui::GetStateStorage()->SetInt(ImGui::GetID(tr(S::CROP_HEADER)), 0);
         return true;  // recipe changed
     }
     ImGui::SameLine();
