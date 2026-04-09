@@ -13,12 +13,16 @@ public:
     // Called after a RAW file is opened to store the camera's As Shot WB.
     void setAsShotWB(float temp, float tint) { as_shot_temperature_ = temp; as_shot_tint_ = tint; }
 
+    // Image dimensions for crop aspect ratio calculations
+    void setImageDimensions(uint32_t w, uint32_t h) { img_width_ = w; img_height_ = h; }
+
     // Set to true by the Auto button in the Tone section; consumed by main.cpp each frame.
     bool auto_tone_requested = false;
 
 private:
     float as_shot_temperature_ = 5500.0f;
     float as_shot_tint_        = 0.0f;
+    uint32_t img_width_ = 1, img_height_ = 1;
     // Track drag state for progressive preview
     bool is_dragging_ = false;
 

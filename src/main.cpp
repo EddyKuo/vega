@@ -425,6 +425,7 @@ static bool setupRawImage(const std::filesystem::path& path)
     g_history.clear();
     g_has_image = true;
     g_develop_panel.setAsShotWB(5500.0f, 0.0f);
+    g_develop_panel.setImageDimensions(g_raw_image.width, g_raw_image.height);
 
     if (g_use_gpu)
         g_gpu_pipeline.uploadRawData(g_raw_image);

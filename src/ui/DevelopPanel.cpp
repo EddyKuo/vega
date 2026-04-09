@@ -181,20 +181,32 @@ bool DevelopPanel::renderCrop(EditRecipe& recipe)
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::Combo("##CropAspect", &crop_ratio_idx_, ratios, IM_ARRAYSIZE(ratios)))
     {
-        // When a fixed ratio is chosen, adjust the right/bottom edges to match
-        // while anchoring to the current left/top and clamping to [0,1].
+        // Enforce pixel-correct aspect ratio, accounting for image dimensions
         if (crop_ratio_idx_ > 0)
         {
             static constexpr float ratio_values[] = { 0.0f, 1.0f, 4.0f/3.0f, 3.0f/2.0f, 16.0f/9.0f };
             float target_ratio = ratio_values[crop_ratio_idx_];
-            float w = recipe.crop_right  - recipe.crop_left;
+
+            // Convert target pixel ratio to normalized-space ratio
+            // In normalized space: pixel_w = norm_w * img_width, pixel_h = norm_h * img_height
+            // target_ratio = pixel_w / pixel_h = (norm_w * img_width) / (norm_h * img_height)
+            // norm_w / norm_h = target_ratio * img_height / img_width
+            float img_aspect = static_cast<float>(img_width_) / static_cast<float>(img_height_);
+            float norm_ratio = target_ratio / img_aspect;
+
+            float w = recipe.crop_right - recipe.crop_left;
             float h = recipe.crop_bottom - recipe.crop_top;
-            // Current actual image aspect is 1:1 in normalised space,
-            // so we constrain width/height such that w/h == target_ratio.
-            if (h > 0.0f && w / h != target_ratio)
+
+            if (h > 0.0f)
             {
-                // Keep width, adjust height
-                float new_h = w / target_ratio;
+                float new_h = w / norm_ratio;
+                if (new_h > 1.0f - recipe.crop_top) {
+                    // Height doesn't fit, constrain width instead
+                    new_h = 1.0f - recipe.crop_top;
+                    float new_w = new_h * norm_ratio;
+                    new_w = std::clamp(new_w, 1e-3f, 1.0f - recipe.crop_left);
+                    recipe.crop_right = recipe.crop_left + new_w;
+                }
                 new_h = std::clamp(new_h, 1e-3f, 1.0f - recipe.crop_top);
                 recipe.crop_bottom = recipe.crop_top + new_h;
                 changed = true;
