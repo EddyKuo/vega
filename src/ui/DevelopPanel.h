@@ -42,8 +42,10 @@ private:
     // Section rendering — each returns true if a value changed
     bool renderWhiteBalance(EditRecipe& recipe);
     bool renderTone(EditRecipe& recipe);
+    bool renderPresence(EditRecipe& recipe);
     bool renderToneCurve(EditRecipe& recipe);
     bool renderHSL(EditRecipe& recipe);
+    bool renderColorGrading(EditRecipe& recipe);
     bool renderDetail(EditRecipe& recipe);
     bool renderEffects(EditRecipe& recipe);
 

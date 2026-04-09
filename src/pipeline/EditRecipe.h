@@ -39,12 +39,27 @@ struct EditRecipe {
     bool bw_mode = false;
     std::array<float, 8> bw_mix = {};
 
+    // Color Grading
+    struct ColorWheel {
+        float hue = 0;
+        float saturation = 0;
+        bool operator==(const ColorWheel&) const = default;
+    };
+    ColorWheel cg_shadows, cg_midtones, cg_highlights;
+    float cg_blending = 50;  // 0-100
+    float cg_balance  = 0;   // -100 to +100
+
     // Sharpening
     float sharpen_amount = 0, sharpen_radius = 1.0f;
     float sharpen_detail = 25, sharpen_masking = 0;
 
     // Denoise
     float denoise_luminance = 0, denoise_color = 0, denoise_detail = 50;
+
+    // Presence
+    float clarity = 0;   // -100 to 100
+    float texture = 0;   // -100 to 100
+    float dehaze  = 0;   // -100 to 100
 
     // Crop & Rotation
     float crop_left = 0, crop_top = 0, crop_right = 1, crop_bottom = 1;

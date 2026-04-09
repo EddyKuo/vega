@@ -99,25 +99,29 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
     }
 
     // Section renderers
-    bool wb_changed     = renderWhiteBalance(recipe);
+    bool wb_changed       = renderWhiteBalance(recipe);
     ImGui::Separator();
-    bool tone_changed   = renderTone(recipe);
+    bool tone_changed     = renderTone(recipe);
     ImGui::Separator();
-    bool curve_changed  = renderToneCurve(recipe);
+    bool presence_changed = renderPresence(recipe);
     ImGui::Separator();
-    bool hsl_changed    = renderHSL(recipe);
+    bool curve_changed    = renderToneCurve(recipe);
     ImGui::Separator();
-    bool detail_changed = renderDetail(recipe);
+    bool hsl_changed      = renderHSL(recipe);
     ImGui::Separator();
-    bool fx_changed     = renderEffects(recipe);
+    bool cg_changed       = renderColorGrading(recipe);
+    ImGui::Separator();
+    bool detail_changed   = renderDetail(recipe);
+    ImGui::Separator();
+    bool fx_changed       = renderEffects(recipe);
 
-    any_changed = wb_changed || tone_changed || curve_changed ||
-                  hsl_changed || detail_changed || fx_changed;
+    any_changed = wb_changed || tone_changed || presence_changed || curve_changed ||
+                  hsl_changed || cg_changed || detail_changed || fx_changed;
 
     if (any_changed)
     {
-        VEGA_LOG_TRACE("DevelopPanel: changed [WB:{} Tone:{} Curve:{} HSL:{} Detail:{} FX:{}]",
-            wb_changed, tone_changed, curve_changed, hsl_changed, detail_changed, fx_changed);
+        VEGA_LOG_TRACE("DevelopPanel: changed [WB:{} Tone:{} Presence:{} Curve:{} HSL:{} CG:{} Detail:{} FX:{}]",
+            wb_changed, tone_changed, presence_changed, curve_changed, hsl_changed, cg_changed, detail_changed, fx_changed);
     }
 
     // Drag-based undo grouping
@@ -135,12 +139,14 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
         {
             // Determine a description based on what changed
             std::string desc = "Adjustment";
-            if (wb_changed)       desc = "White Balance";
-            else if (tone_changed)  desc = "Tone";
-            else if (curve_changed) desc = "Tone Curve";
-            else if (hsl_changed)   desc = "HSL";
-            else if (detail_changed) desc = "Detail";
-            else if (fx_changed)    desc = "Effects";
+            if (wb_changed)            desc = "White Balance";
+            else if (tone_changed)     desc = "Tone";
+            else if (presence_changed) desc = "Presence";
+            else if (curve_changed)    desc = "Tone Curve";
+            else if (hsl_changed)      desc = "HSL";
+            else if (cg_changed)       desc = "Color Grading";
+            else if (detail_changed)   desc = "Detail";
+            else if (fx_changed)       desc = "Effects";
 
             EditCommand cmd;
             cmd.description = desc;
@@ -212,6 +218,22 @@ bool DevelopPanel::renderTone(EditRecipe& recipe)
     changed |= vegaSlider("Shadows",    &recipe.shadows,     -100.0f, 100.0f, 0.0f, "%.0f");
     changed |= vegaSlider("Whites",     &recipe.whites,      -100.0f, 100.0f, 0.0f, "%.0f");
     changed |= vegaSlider("Blacks",     &recipe.blacks,      -100.0f, 100.0f, 0.0f, "%.0f");
+    return changed;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Presence (Clarity, Texture, Dehaze)
+// ─────────────────────────────────────────────────────────────────────
+
+bool DevelopPanel::renderPresence(EditRecipe& recipe)
+{
+    if (!ImGui::CollapsingHeader(tr("presence.header"), ImGuiTreeNodeFlags_DefaultOpen))
+        return false;
+
+    bool changed = false;
+    changed |= vegaSlider("presence.clarity", &recipe.clarity, -100.0f, 100.0f, 0.0f, "%.0f");
+    changed |= vegaSlider("presence.texture", &recipe.texture, -100.0f, 100.0f, 0.0f, "%.0f");
+    changed |= vegaSlider("presence.dehaze",  &recipe.dehaze,  -100.0f, 100.0f, 0.0f, "%.0f");
     return changed;
 }
 
@@ -607,6 +629,38 @@ bool DevelopPanel::renderHSL(EditRecipe& recipe)
             ImGui::EndTabBar();
         }
     }
+
+    return changed;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Color Grading
+// ─────────────────────────────────────────────────────────────────────
+
+bool DevelopPanel::renderColorGrading(EditRecipe& recipe)
+{
+    if (!ImGui::CollapsingHeader(tr("cg.header")))
+        return false;
+
+    bool changed = false;
+
+    ImGui::TextDisabled("%s", tr("cg.shadows"));
+    changed |= vegaSlider("cg.shadow_hue", &recipe.cg_shadows.hue,        0.0f, 360.0f, 0.0f,  "%.0f");
+    changed |= vegaSlider("cg.shadow_sat", &recipe.cg_shadows.saturation, 0.0f, 100.0f, 0.0f,  "%.0f");
+
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", tr("cg.midtones"));
+    changed |= vegaSlider("cg.mid_hue", &recipe.cg_midtones.hue,        0.0f, 360.0f, 0.0f,  "%.0f");
+    changed |= vegaSlider("cg.mid_sat", &recipe.cg_midtones.saturation, 0.0f, 100.0f, 0.0f,  "%.0f");
+
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", tr("cg.highlights"));
+    changed |= vegaSlider("cg.high_hue", &recipe.cg_highlights.hue,        0.0f, 360.0f, 0.0f,  "%.0f");
+    changed |= vegaSlider("cg.high_sat", &recipe.cg_highlights.saturation, 0.0f, 100.0f, 0.0f,  "%.0f");
+
+    ImGui::Separator();
+    changed |= vegaSlider("cg.blending", &recipe.cg_blending, 0.0f, 100.0f, 50.0f, "%.0f");
+    changed |= vegaSlider("cg.balance",  &recipe.cg_balance,  -100.0f, 100.0f, 0.0f, "%.0f");
 
     return changed;
 }

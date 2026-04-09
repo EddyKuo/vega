@@ -70,6 +70,12 @@ INSERT INTO translations VALUES ('en', 'tone.whites',       'Whites');
 INSERT INTO translations VALUES ('en', 'tone.blacks',       'Blacks');
 INSERT INTO translations VALUES ('en', 'tone.auto',         'Auto');
 
+-- Presence
+INSERT INTO translations VALUES ('en', 'presence.header',  'Presence');
+INSERT INTO translations VALUES ('en', 'presence.clarity', 'Clarity');
+INSERT INTO translations VALUES ('en', 'presence.texture', 'Texture');
+INSERT INTO translations VALUES ('en', 'presence.dehaze',  'Dehaze');
+
 -- Tone Curve
 INSERT INTO translations VALUES ('en', 'curve.header',      'Tone Curve');
 
@@ -100,6 +106,20 @@ INSERT INTO translations VALUES ('en', 'detail.nr',         'Noise Reduction');
 INSERT INTO translations VALUES ('en', 'detail.nr_luma',    'Luminance');
 INSERT INTO translations VALUES ('en', 'detail.nr_color',   'Color');
 INSERT INTO translations VALUES ('en', 'detail.nr_detail',  'Detail');
+
+-- Color Grading
+INSERT INTO translations VALUES ('en', 'cg.header',      'Color Grading');
+INSERT INTO translations VALUES ('en', 'cg.shadows',     'Shadows');
+INSERT INTO translations VALUES ('en', 'cg.midtones',    'Midtones');
+INSERT INTO translations VALUES ('en', 'cg.highlights',  'Highlights');
+INSERT INTO translations VALUES ('en', 'cg.shadow_hue',  'Hue##cg_s');
+INSERT INTO translations VALUES ('en', 'cg.shadow_sat',  'Saturation##cg_s');
+INSERT INTO translations VALUES ('en', 'cg.mid_hue',     'Hue##cg_m');
+INSERT INTO translations VALUES ('en', 'cg.mid_sat',     'Saturation##cg_m');
+INSERT INTO translations VALUES ('en', 'cg.high_hue',    'Hue##cg_h');
+INSERT INTO translations VALUES ('en', 'cg.high_sat',    'Saturation##cg_h');
+INSERT INTO translations VALUES ('en', 'cg.blending',    'Blending');
+INSERT INTO translations VALUES ('en', 'cg.balance',     'Balance');
 
 -- Effects
 INSERT INTO translations VALUES ('en', 'fx.header',         'Effects');
@@ -228,6 +248,12 @@ INSERT INTO translations VALUES ('zh_tw', 'tone.whites',       '白色');
 INSERT INTO translations VALUES ('zh_tw', 'tone.blacks',       '黑色');
 INSERT INTO translations VALUES ('zh_tw', 'tone.auto',         '自動');
 
+-- Presence
+INSERT INTO translations VALUES ('zh_tw', 'presence.header',  '存在感');
+INSERT INTO translations VALUES ('zh_tw', 'presence.clarity', '清晰度');
+INSERT INTO translations VALUES ('zh_tw', 'presence.texture', '紋理');
+INSERT INTO translations VALUES ('zh_tw', 'presence.dehaze',  '去霧');
+
 -- Tone Curve
 INSERT INTO translations VALUES ('zh_tw', 'curve.header',      '色調曲線');
 
@@ -258,6 +284,20 @@ INSERT INTO translations VALUES ('zh_tw', 'detail.nr',         '降噪');
 INSERT INTO translations VALUES ('zh_tw', 'detail.nr_luma',    '亮度');
 INSERT INTO translations VALUES ('zh_tw', 'detail.nr_color',   '色彩');
 INSERT INTO translations VALUES ('zh_tw', 'detail.nr_detail',  '細節');
+
+-- Color Grading
+INSERT INTO translations VALUES ('zh_tw', 'cg.header',      '色彩分級');
+INSERT INTO translations VALUES ('zh_tw', 'cg.shadows',     '陰影');
+INSERT INTO translations VALUES ('zh_tw', 'cg.midtones',    '中間調');
+INSERT INTO translations VALUES ('zh_tw', 'cg.highlights',  '亮部');
+INSERT INTO translations VALUES ('zh_tw', 'cg.shadow_hue',  '色相##cg_s');
+INSERT INTO translations VALUES ('zh_tw', 'cg.shadow_sat',  '飽和度##cg_s');
+INSERT INTO translations VALUES ('zh_tw', 'cg.mid_hue',     '色相##cg_m');
+INSERT INTO translations VALUES ('zh_tw', 'cg.mid_sat',     '飽和度##cg_m');
+INSERT INTO translations VALUES ('zh_tw', 'cg.high_hue',    '色相##cg_h');
+INSERT INTO translations VALUES ('zh_tw', 'cg.high_sat',    '飽和度##cg_h');
+INSERT INTO translations VALUES ('zh_tw', 'cg.blending',    '混合');
+INSERT INTO translations VALUES ('zh_tw', 'cg.balance',     '平衡');
 
 -- Effects
 INSERT INTO translations VALUES ('zh_tw', 'fx.header',         '效果');

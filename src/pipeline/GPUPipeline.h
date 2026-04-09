@@ -38,6 +38,8 @@ private:
     ComputeShader wb_exposure_shader_;
     ComputeShader tone_curve_shader_;
     ComputeShader hsl_shader_;
+    ComputeShader presence_shader_;
+    ComputeShader color_grading_shader_;
     ComputeShader denoise_shader_;
     ComputeShader sharpen_shader_;
     ComputeShader gamma_shader_;
@@ -99,6 +101,24 @@ private:
         uint32_t dst_width, dst_height;
     };
     ConstantBuffer<DimensionsCB> dim_cb_;
+
+    // CB slot 0 (presence pass): clarity, texture, dehaze
+    struct PresenceCB {
+        float    clarity, texture, dehaze, pad0;
+        uint32_t width, height, pad1, pad2;
+    };
+    ConstantBuffer<PresenceCB> presence_cb_;
+
+    // CB slot 0 (color grading pass): three-way tonal color grading
+    struct ColorGradingCB {
+        float    shadow_hue,  shadow_sat;   //  8 bytes
+        float    mid_hue,     mid_sat;      // 16 bytes
+        float    high_hue,    high_sat;     // 24 bytes
+        float    blending,    balance;      // 32 bytes
+        uint32_t width,       height;       // 40 bytes
+        float    pad0,        pad1;         // 48 bytes — 16-byte aligned total
+    };
+    ConstantBuffer<ColorGradingCB> color_grading_cb_;
 
     // CB slot 0 (denoise pass): luminance/chroma denoise parameters
     struct DenoiseCB {

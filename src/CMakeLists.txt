@@ -133,8 +133,10 @@ if(FXC_EXECUTABLE)
     set(VEGA_HLSL_SHADERS
         demosaic.hlsl
         white_balance_exposure.hlsl
+        presence.hlsl
         tone_curve.hlsl
         hsl_adjust.hlsl
+        color_grading.hlsl
         denoise.hlsl
         sharpen_usm.hlsl
         gamma_output.hlsl

@@ -58,6 +58,14 @@ bool GPUPipeline::initialize(D3D11Context& ctx)
         VEGA_LOG_ERROR("GPUPipeline: failed to create Sharpen constant buffer");
         return false;
     }
+    if (!presence_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create Presence constant buffer");
+        return false;
+    }
+    if (!color_grading_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create ColorGrading constant buffer");
+        return false;
+    }
 
     // Create linear sampler for LUT sampling
     {
@@ -330,6 +338,52 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
     }
 
     // ──────────────────────────────────────────────────────────────────────
+    // Pass 1b: Presence (Clarity, Texture, Dehaze) — linear light space
+    //   Input:  tex_a (t0)
+    //   Output: tex_b (u0)
+    //   Skip if all three parameters are negligible.
+    // ──────────────────────────────────────────────────────────────────────
+    {
+        const bool run_presence = presence_shader_.isValid() &&
+                                  (std::fabs(recipe.clarity) > 0.5f ||
+                                   std::fabs(recipe.texture) > 0.5f ||
+                                   std::fabs(recipe.dehaze)  > 0.5f);
+
+        if (run_presence) {
+            PresenceCB cb{};
+            cb.clarity = recipe.clarity;
+            cb.texture = recipe.texture;
+            cb.dehaze  = recipe.dehaze;
+            cb.pad0    = 0.0f;
+            cb.width   = dst_w;
+            cb.height  = dst_h;
+            cb.pad1    = 0;
+            cb.pad2    = 0;
+            presence_cb_.update(dc, cb);
+            presence_cb_.bindCS(dc, 0);
+
+            ID3D11ShaderResourceView* srvs[] = { tex_a.srv.Get() };
+            dc->CSSetShaderResources(0, 1, srvs);
+
+            ID3D11UnorderedAccessView* uavs[] = { tex_b.uav.Get() };
+            dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+            presence_shader_.bind(dc);
+            presence_shader_.dispatch(dc, groups_x, groups_y, 1);
+
+            // Unbind
+            ID3D11ShaderResourceView* null_srv2[] = { nullptr };
+            dc->CSSetShaderResources(0, 1, null_srv2);
+            ID3D11UnorderedAccessView* null_uav2[] = { nullptr };
+            dc->CSSetUnorderedAccessViews(0, 1, null_uav2, nullptr);
+
+            // Swap: result is now in tex_b; swap so tone curve reads from tex_a
+            std::swap(tex_a, tex_b);
+        }
+        // If skipped, tex_a still holds the WB+Exposure result — no copy needed.
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
     // Pass 2: Tone Curve (using 1D LUT textures)
     //   Input:  tex_a (t0), curve LUTs (t1-t4)
     //   Output: tex_b (u0)
@@ -407,6 +461,54 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
     // After pass 3 the latest result is in tex_a (result_in_a == true).
     // Passes 4 and 5 ping-pong without copies when skipped.
     bool result_in_a = true;
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Pass 3b: Color Grading (Shadows / Midtones / Highlights)
+    //   Input:  tex_a (t0)   Output: tex_b (u0)
+    //   Skip if all three wheels have saturation below threshold.
+    // ──────────────────────────────────────────────────────────────────────
+    {
+        const bool run_cg = color_grading_shader_.isValid() &&
+                            (recipe.cg_shadows.saturation    >= 0.1f ||
+                             recipe.cg_midtones.saturation   >= 0.1f ||
+                             recipe.cg_highlights.saturation >= 0.1f);
+
+        if (run_cg) {
+            ColorGradingCB cb{};
+            cb.shadow_hue  = recipe.cg_shadows.hue;
+            cb.shadow_sat  = recipe.cg_shadows.saturation;
+            cb.mid_hue     = recipe.cg_midtones.hue;
+            cb.mid_sat     = recipe.cg_midtones.saturation;
+            cb.high_hue    = recipe.cg_highlights.hue;
+            cb.high_sat    = recipe.cg_highlights.saturation;
+            cb.blending    = recipe.cg_blending;
+            cb.balance     = recipe.cg_balance;
+            cb.width       = dst_w;
+            cb.height      = dst_h;
+            cb.pad0 = cb.pad1 = 0.0f;
+            color_grading_cb_.update(dc, cb);
+            color_grading_cb_.bindCS(dc, 0);
+
+            // Input from tex_a (result_in_a == true at this point)
+            ID3D11ShaderResourceView* srvs[] = { tex_a.srv.Get() };
+            dc->CSSetShaderResources(0, 1, srvs);
+
+            ID3D11UnorderedAccessView* uavs[] = { tex_b.uav.Get() };
+            dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+            color_grading_shader_.bind(dc);
+            color_grading_shader_.dispatch(dc, groups_x, groups_y, 1);
+
+            // Unbind before next pass
+            ID3D11ShaderResourceView* null_srv[] = { nullptr };
+            dc->CSSetShaderResources(0, 1, null_srv);
+            ID3D11UnorderedAccessView* null_uav[] = { nullptr };
+            dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
+
+            result_in_a = false; // result now in tex_b
+        }
+        // Skip: result_in_a stays true (tex_a holds the data)
+    }
 
     // ──────────────────────────────────────────────────────────────────────
     // Pass 4: Denoise
@@ -611,9 +713,11 @@ void GPUPipeline::loadShaders()
 
     tryLoad(demosaic_shader_,    "demosaic.hlsl");
     tryLoad(wb_exposure_shader_, "white_balance_exposure.hlsl");
+    tryLoad(presence_shader_,    "presence.hlsl");
     tryLoad(tone_curve_shader_,  "tone_curve.hlsl");
-    tryLoad(hsl_shader_,         "hsl_adjust.hlsl");
-    tryLoad(denoise_shader_,     "denoise.hlsl");
+    tryLoad(hsl_shader_,            "hsl_adjust.hlsl");
+    tryLoad(color_grading_shader_,  "color_grading.hlsl");
+    tryLoad(denoise_shader_,        "denoise.hlsl");
     tryLoad(sharpen_shader_,     "sharpen_usm.hlsl");
     tryLoad(gamma_shader_,       "gamma_output.hlsl");
     tryLoad(histogram_shader_,   "histogram_compute.hlsl");
