@@ -25,6 +25,9 @@ private:
     // Snapshot of recipe before a drag begins, used for undo grouping
     EditRecipe drag_start_recipe_{};
 
+    // Crop aspect ratio preset index: 0=Free, 1=1:1, 2=4:3, 3=3:2, 4=16:9
+    int crop_ratio_idx_ = 0;
+
     // HSL tab selection: 0=Hue, 1=Saturation, 2=Luminance
     int hsl_tab_ = 0;
 
@@ -40,6 +43,7 @@ private:
                     float default_val = 0.0f, const char* format = "%.1f");
 
     // Section rendering — each returns true if a value changed
+    bool renderCrop(EditRecipe& recipe);
     bool renderWhiteBalance(EditRecipe& recipe);
     bool renderTone(EditRecipe& recipe);
     bool renderPresence(EditRecipe& recipe);

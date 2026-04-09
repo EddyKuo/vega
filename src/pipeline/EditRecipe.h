@@ -65,6 +65,15 @@ struct EditRecipe {
     float crop_left = 0, crop_top = 0, crop_right = 1, crop_bottom = 1;
     float rotation = 0;
 
+    // Effects (applied in sRGB space, after gamma)
+    float vignette_amount   = 0;    // -100 to 100
+    float vignette_midpoint = 50;   // 0 to 100
+    float vignette_roundness = 0;   // -100 to 100
+    float vignette_feather  = 50;   // 0 to 100
+    float grain_amount      = 0;    // 0 to 100
+    float grain_size        = 25;   // 1 to 100
+    float grain_roughness   = 50;   // 0 to 100
+
     // Output color space
     enum class ColorSpace { sRGB, AdobeRGB, ProPhotoRGB, DisplayP3 };
     ColorSpace output_colorspace = ColorSpace::sRGB;

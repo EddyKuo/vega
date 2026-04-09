@@ -43,6 +43,8 @@ private:
     ComputeShader denoise_shader_;
     ComputeShader sharpen_shader_;
     ComputeShader gamma_shader_;
+    ComputeShader effects_shader_;
+    ComputeShader crop_rotate_shader_;
     // Note: histogram_shader_ is defined but not dispatched in the display path;
     // it would be used separately for histogram computation.
     ComputeShader histogram_shader_;
@@ -132,6 +134,14 @@ private:
     };
     ConstantBuffer<DenoiseCB> denoise_cb_;
 
+    // CB slot 0 (crop/rotate pass): crop rectangle + rotation
+    struct CropRotateCB {
+        float crop_left, crop_top, crop_right, crop_bottom;
+        float rotation, sin_r, cos_r, pad0;
+        uint32_t src_width, src_height, dst_width, dst_height;
+    };
+    ConstantBuffer<CropRotateCB> crop_rotate_cb_;
+
     // CB slot 0 (sharpen pass): unsharp-mask sharpening parameters
     struct SharpenCB {
         float amount;    // recipe.sharpen_amount / 50
@@ -140,6 +150,14 @@ private:
         float pad0;
     };
     ConstantBuffer<SharpenCB> sharpen_cb_;
+
+    // CB slot 0 (effects pass): vignette + grain, applied in sRGB space
+    struct EffectsCB {
+        float    vig_amount, vig_midpoint, vig_roundness, vig_feather;
+        float    grain_amount, grain_size, grain_roughness, pad0;
+        uint32_t width, height, frame_seed, pad1;
+    };
+    ConstantBuffer<EffectsCB> effects_cb_;
 
     // ── Curve LUT textures (1D, 4096 entries each) ──
     static constexpr uint32_t CURVE_LUT_SIZE = 4096;

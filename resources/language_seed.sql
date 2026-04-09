@@ -70,6 +70,11 @@ INSERT INTO translations VALUES ('en', 'tone.whites',       'Whites');
 INSERT INTO translations VALUES ('en', 'tone.blacks',       'Blacks');
 INSERT INTO translations VALUES ('en', 'tone.auto',         'Auto');
 
+-- Crop & Straighten
+INSERT INTO translations VALUES ('en', 'crop.header',   'Crop & Straighten');
+INSERT INTO translations VALUES ('en', 'crop.free',     'Free');
+INSERT INTO translations VALUES ('en', 'crop.reset',    'Reset Crop');
+
 -- Presence
 INSERT INTO translations VALUES ('en', 'presence.header',  'Presence');
 INSERT INTO translations VALUES ('en', 'presence.clarity', 'Clarity');
@@ -125,6 +130,19 @@ INSERT INTO translations VALUES ('en', 'cg.balance',     'Balance');
 INSERT INTO translations VALUES ('en', 'fx.header',         'Effects');
 INSERT INTO translations VALUES ('en', 'fx.vibrance',       'Vibrance');
 INSERT INTO translations VALUES ('en', 'fx.saturation',     'Saturation');
+
+-- Effects: Vignette
+INSERT INTO translations VALUES ('en', 'fx.vignette_header', 'Vignette');
+INSERT INTO translations VALUES ('en', 'fx.vig_amount',      'Amount##vig');
+INSERT INTO translations VALUES ('en', 'fx.vig_midpoint',    'Midpoint##vig');
+INSERT INTO translations VALUES ('en', 'fx.vig_roundness',   'Roundness##vig');
+INSERT INTO translations VALUES ('en', 'fx.vig_feather',     'Feather##vig');
+
+-- Effects: Grain
+INSERT INTO translations VALUES ('en', 'fx.grain_header',    'Grain');
+INSERT INTO translations VALUES ('en', 'fx.grain_amount',    'Amount##grain');
+INSERT INTO translations VALUES ('en', 'fx.grain_size',      'Size##grain');
+INSERT INTO translations VALUES ('en', 'fx.grain_roughness', 'Roughness##grain');
 
 -- Status
 INSERT INTO translations VALUES ('en', 'status.ready',      'Ready');
@@ -198,6 +216,11 @@ INSERT INTO translations VALUES ('en', 'Luminance',         'Luminance');
 INSERT INTO translations VALUES ('en', 'Metadata',          'Metadata');
 INSERT INTO translations VALUES ('en', 'Sharpening',        'Sharpening');
 INSERT INTO translations VALUES ('en', 'Noise Reduction',   'Noise Reduction');
+INSERT INTO translations VALUES ('en', 'Rotation##crop',    'Rotation');
+INSERT INTO translations VALUES ('en', 'Left##crop',        'Left');
+INSERT INTO translations VALUES ('en', 'Top##crop',         'Top');
+INSERT INTO translations VALUES ('en', 'Right##crop',       'Right');
+INSERT INTO translations VALUES ('en', 'Bottom##crop',      'Bottom');
 
 -- ============================================================================
 -- Traditional Chinese (zh_tw)
@@ -304,6 +327,19 @@ INSERT INTO translations VALUES ('zh_tw', 'fx.header',         '效果');
 INSERT INTO translations VALUES ('zh_tw', 'fx.vibrance',       '自然飽和度');
 INSERT INTO translations VALUES ('zh_tw', 'fx.saturation',     '飽和度');
 
+-- Effects: Vignette
+INSERT INTO translations VALUES ('zh_tw', 'fx.vignette_header', '暗角');
+INSERT INTO translations VALUES ('zh_tw', 'fx.vig_amount',      '強度##vig');
+INSERT INTO translations VALUES ('zh_tw', 'fx.vig_midpoint',    '中心點##vig');
+INSERT INTO translations VALUES ('zh_tw', 'fx.vig_roundness',   '圓度##vig');
+INSERT INTO translations VALUES ('zh_tw', 'fx.vig_feather',     '羽化##vig');
+
+-- Effects: Grain
+INSERT INTO translations VALUES ('zh_tw', 'fx.grain_header',    '顆粒');
+INSERT INTO translations VALUES ('zh_tw', 'fx.grain_amount',    '強度##grain');
+INSERT INTO translations VALUES ('zh_tw', 'fx.grain_size',      '大小##grain');
+INSERT INTO translations VALUES ('zh_tw', 'fx.grain_roughness', '粗糙度##grain');
+
 -- Status
 INSERT INTO translations VALUES ('zh_tw', 'status.ready',      '就緒');
 INSERT INTO translations VALUES ('zh_tw', 'status.open_hint',  'Ctrl+O 或 檔案 > 開啟 RAW');
@@ -376,3 +412,13 @@ INSERT INTO translations VALUES ('zh_tw', 'wb.preset.shade',      '陰影');
 INSERT INTO translations VALUES ('zh_tw', 'wb.preset.tungsten',   '鎢絲燈');
 INSERT INTO translations VALUES ('zh_tw', 'wb.preset.fluorescent','螢光燈');
 INSERT INTO translations VALUES ('zh_tw', 'wb.preset.flash',      '閃光燈');
+
+-- Crop & Straighten
+INSERT INTO translations VALUES ('zh_tw', 'crop.header',   '裁切與拉直');
+INSERT INTO translations VALUES ('zh_tw', 'crop.free',     '自由');
+INSERT INTO translations VALUES ('zh_tw', 'crop.reset',    '重設裁切');
+INSERT INTO translations VALUES ('zh_tw', 'Rotation##crop','旋轉');
+INSERT INTO translations VALUES ('zh_tw', 'Left##crop',    '左');
+INSERT INTO translations VALUES ('zh_tw', 'Top##crop',     '上');
+INSERT INTO translations VALUES ('zh_tw', 'Right##crop',   '右');
+INSERT INTO translations VALUES ('zh_tw', 'Bottom##crop',  '下');

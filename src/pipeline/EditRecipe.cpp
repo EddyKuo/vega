@@ -155,6 +155,15 @@ nlohmann::json EditRecipe::toJson() const
     j["crop_bottom"] = crop_bottom;
     j["rotation"]    = rotation;
 
+    // Effects
+    j["vignette_amount"]    = vignette_amount;
+    j["vignette_midpoint"]  = vignette_midpoint;
+    j["vignette_roundness"] = vignette_roundness;
+    j["vignette_feather"]   = vignette_feather;
+    j["grain_amount"]       = grain_amount;
+    j["grain_size"]         = grain_size;
+    j["grain_roughness"]    = grain_roughness;
+
     // Output color space
     j["output_colorspace"] = colorSpaceToString(output_colorspace);
 
@@ -240,6 +249,15 @@ EditRecipe EditRecipe::fromJson(const nlohmann::json& j)
         r.crop_right  = val(j, "crop_right",   defaults.crop_right);
         r.crop_bottom = val(j, "crop_bottom",  defaults.crop_bottom);
         r.rotation    = val(j, "rotation",     defaults.rotation);
+
+        // Effects
+        r.vignette_amount    = val(j, "vignette_amount",    defaults.vignette_amount);
+        r.vignette_midpoint  = val(j, "vignette_midpoint",  defaults.vignette_midpoint);
+        r.vignette_roundness = val(j, "vignette_roundness", defaults.vignette_roundness);
+        r.vignette_feather   = val(j, "vignette_feather",   defaults.vignette_feather);
+        r.grain_amount       = val(j, "grain_amount",       defaults.grain_amount);
+        r.grain_size         = val(j, "grain_size",         defaults.grain_size);
+        r.grain_roughness    = val(j, "grain_roughness",    defaults.grain_roughness);
 
         // Output color space
         r.output_colorspace = stringToColorSpace(

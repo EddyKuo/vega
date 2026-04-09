@@ -99,6 +99,8 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
     }
 
     // Section renderers
+    bool crop_changed     = renderCrop(recipe);
+    ImGui::Separator();
     bool wb_changed       = renderWhiteBalance(recipe);
     ImGui::Separator();
     bool tone_changed     = renderTone(recipe);
@@ -115,13 +117,13 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
     ImGui::Separator();
     bool fx_changed       = renderEffects(recipe);
 
-    any_changed = wb_changed || tone_changed || presence_changed || curve_changed ||
-                  hsl_changed || cg_changed || detail_changed || fx_changed;
+    any_changed = crop_changed || wb_changed || tone_changed || presence_changed ||
+                  curve_changed || hsl_changed || cg_changed || detail_changed || fx_changed;
 
     if (any_changed)
     {
-        VEGA_LOG_TRACE("DevelopPanel: changed [WB:{} Tone:{} Presence:{} Curve:{} HSL:{} CG:{} Detail:{} FX:{}]",
-            wb_changed, tone_changed, presence_changed, curve_changed, hsl_changed, cg_changed, detail_changed, fx_changed);
+        VEGA_LOG_TRACE("DevelopPanel: changed [Crop:{} WB:{} Tone:{} Presence:{} Curve:{} HSL:{} CG:{} Detail:{} FX:{}]",
+            crop_changed, wb_changed, tone_changed, presence_changed, curve_changed, hsl_changed, cg_changed, detail_changed, fx_changed);
     }
 
     // Drag-based undo grouping
@@ -139,7 +141,8 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
         {
             // Determine a description based on what changed
             std::string desc = "Adjustment";
-            if (wb_changed)            desc = "White Balance";
+            if (crop_changed)          desc = "Crop & Straighten";
+            else if (wb_changed)       desc = "White Balance";
             else if (tone_changed)     desc = "Tone";
             else if (presence_changed) desc = "Presence";
             else if (curve_changed)    desc = "Tone Curve";
@@ -158,6 +161,75 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
     }
 
     return any_changed;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Crop & Straighten
+// ─────────────────────────────────────────────────────────────────────
+
+bool DevelopPanel::renderCrop(EditRecipe& recipe)
+{
+    if (!ImGui::CollapsingHeader(tr(S::CROP_HEADER)))
+        return false;
+
+    bool changed = false;
+
+    // Aspect ratio preset dropdown
+    const char* ratios[] = {
+        tr("crop.free"), "1:1", "4:3", "3:2", "16:9"
+    };
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##CropAspect", &crop_ratio_idx_, ratios, IM_ARRAYSIZE(ratios)))
+    {
+        // When a fixed ratio is chosen, adjust the right/bottom edges to match
+        // while anchoring to the current left/top and clamping to [0,1].
+        if (crop_ratio_idx_ > 0)
+        {
+            static constexpr float ratio_values[] = { 0.0f, 1.0f, 4.0f/3.0f, 3.0f/2.0f, 16.0f/9.0f };
+            float target_ratio = ratio_values[crop_ratio_idx_];
+            float w = recipe.crop_right  - recipe.crop_left;
+            float h = recipe.crop_bottom - recipe.crop_top;
+            // Current actual image aspect is 1:1 in normalised space,
+            // so we constrain width/height such that w/h == target_ratio.
+            if (h > 0.0f && w / h != target_ratio)
+            {
+                // Keep width, adjust height
+                float new_h = w / target_ratio;
+                new_h = std::clamp(new_h, 1e-3f, 1.0f - recipe.crop_top);
+                recipe.crop_bottom = recipe.crop_top + new_h;
+                changed = true;
+            }
+        }
+    }
+
+    changed |= vegaSlider("Rotation##crop", &recipe.rotation, -45.0f, 45.0f, 0.0f, "%.1f deg");
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Crop");
+
+    changed |= vegaSlider("Left##crop",   &recipe.crop_left,   0.0f, 1.0f, 0.0f, "%.2f");
+    changed |= vegaSlider("Top##crop",    &recipe.crop_top,    0.0f, 1.0f, 0.0f, "%.2f");
+    changed |= vegaSlider("Right##crop",  &recipe.crop_right,  0.0f, 1.0f, 1.0f, "%.2f");
+    changed |= vegaSlider("Bottom##crop", &recipe.crop_bottom, 0.0f, 1.0f, 1.0f, "%.2f");
+
+    // Ensure left < right and top < bottom
+    if (recipe.crop_left  >= recipe.crop_right)  { recipe.crop_right  = std::min(recipe.crop_left  + 0.01f, 1.0f); changed = true; }
+    if (recipe.crop_top   >= recipe.crop_bottom) { recipe.crop_bottom = std::min(recipe.crop_top   + 0.01f, 1.0f); changed = true; }
+
+    // Reset button
+    ImGui::Spacing();
+    if (ImGui::Button(tr("crop.reset")))
+    {
+        recipe.crop_left   = 0.0f;
+        recipe.crop_top    = 0.0f;
+        recipe.crop_right  = 1.0f;
+        recipe.crop_bottom = 1.0f;
+        recipe.rotation    = 0.0f;
+        crop_ratio_idx_    = 0;
+        changed = true;
+    }
+
+    return changed;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -709,6 +781,24 @@ bool DevelopPanel::renderEffects(EditRecipe& recipe)
     bool changed = false;
     changed |= vegaSlider("Vibrance",           &recipe.vibrance,   -100.0f, 100.0f, 0.0f, "%.0f");
     changed |= vegaSlider("Saturation##effect", &recipe.saturation, -100.0f, 100.0f, 0.0f, "%.0f");
+
+    ImGui::Spacing();
+
+    if (ImGui::CollapsingHeader(tr("fx.vignette_header")))
+    {
+        changed |= vegaSlider("fx.vig_amount",    &recipe.vignette_amount,    -100.0f, 100.0f,  0.0f, "%.0f");
+        changed |= vegaSlider("fx.vig_midpoint",  &recipe.vignette_midpoint,    0.0f, 100.0f,  50.0f, "%.0f");
+        changed |= vegaSlider("fx.vig_roundness", &recipe.vignette_roundness, -100.0f, 100.0f,  0.0f, "%.0f");
+        changed |= vegaSlider("fx.vig_feather",   &recipe.vignette_feather,     0.0f, 100.0f,  50.0f, "%.0f");
+    }
+
+    if (ImGui::CollapsingHeader(tr("fx.grain_header")))
+    {
+        changed |= vegaSlider("fx.grain_amount",    &recipe.grain_amount,    0.0f, 100.0f,  0.0f, "%.0f");
+        changed |= vegaSlider("fx.grain_size",      &recipe.grain_size,      1.0f, 100.0f, 25.0f, "%.0f");
+        changed |= vegaSlider("fx.grain_roughness", &recipe.grain_roughness, 0.0f, 100.0f, 50.0f, "%.0f");
+    }
+
     return changed;
 }
 

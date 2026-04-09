@@ -140,6 +140,8 @@ if(FXC_EXECUTABLE)
         denoise.hlsl
         sharpen_usm.hlsl
         gamma_output.hlsl
+        effects.hlsl
+        crop_rotate.hlsl
         histogram_compute.hlsl
     )
 

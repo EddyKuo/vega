@@ -41,6 +41,9 @@ namespace S {
     inline constexpr const char* FOLDER_ALL_PHOTOS  = "folder.all_photos";
     inline constexpr const char* IMPORT_PROGRESS    = "import.progress";
 
+    // Crop & Straighten
+    inline constexpr const char* CROP_HEADER        = "crop.header";
+
     // White Balance
     inline constexpr const char* WB_HEADER          = "wb.header";
     inline constexpr const char* WB_TEMPERATURE     = "wb.temperature";
