@@ -121,6 +121,17 @@ nlohmann::json EditRecipe::toJson() const
     j["vibrance"]   = vibrance;
     j["saturation"] = saturation;
 
+    // B&W Mix
+    j["bw_mode"] = bw_mode;
+    j["bw_mix"]  = arrayToJson(bw_mix);
+
+    // Color Grading
+    j["cg_shadows"]    = {{"hue", cg_shadows.hue},    {"sat", cg_shadows.saturation}};
+    j["cg_midtones"]   = {{"hue", cg_midtones.hue},   {"sat", cg_midtones.saturation}};
+    j["cg_highlights"] = {{"hue", cg_highlights.hue}, {"sat", cg_highlights.saturation}};
+    j["cg_blending"]   = cg_blending;
+    j["cg_balance"]    = cg_balance;
+
     // Sharpening
     j["sharpen_amount"]  = sharpen_amount;
     j["sharpen_radius"]  = sharpen_radius;
@@ -132,12 +143,26 @@ nlohmann::json EditRecipe::toJson() const
     j["denoise_color"]     = denoise_color;
     j["denoise_detail"]    = denoise_detail;
 
+    // Presence
+    j["clarity"] = clarity;
+    j["texture"] = texture;
+    j["dehaze"]  = dehaze;
+
     // Crop & Rotation
     j["crop_left"]   = crop_left;
     j["crop_top"]    = crop_top;
     j["crop_right"]  = crop_right;
     j["crop_bottom"] = crop_bottom;
     j["rotation"]    = rotation;
+
+    // Effects
+    j["vignette_amount"]    = vignette_amount;
+    j["vignette_midpoint"]  = vignette_midpoint;
+    j["vignette_roundness"] = vignette_roundness;
+    j["vignette_feather"]   = vignette_feather;
+    j["grain_amount"]       = grain_amount;
+    j["grain_size"]         = grain_size;
+    j["grain_roughness"]    = grain_roughness;
 
     // Output color space
     j["output_colorspace"] = colorSpaceToString(output_colorspace);
@@ -182,6 +207,26 @@ EditRecipe EditRecipe::fromJson(const nlohmann::json& j)
         r.vibrance   = val(j, "vibrance",   defaults.vibrance);
         r.saturation = val(j, "saturation", defaults.saturation);
 
+        // B&W Mix
+        r.bw_mode = val(j, "bw_mode", defaults.bw_mode);
+        if (j.contains("bw_mix")) r.bw_mix = arrayFromJson(j["bw_mix"], defaults.bw_mix);
+
+        // Color Grading
+        if (j.contains("cg_shadows") && j["cg_shadows"].is_object()) {
+            r.cg_shadows.hue        = val(j["cg_shadows"], "hue", defaults.cg_shadows.hue);
+            r.cg_shadows.saturation = val(j["cg_shadows"], "sat", defaults.cg_shadows.saturation);
+        }
+        if (j.contains("cg_midtones") && j["cg_midtones"].is_object()) {
+            r.cg_midtones.hue        = val(j["cg_midtones"], "hue", defaults.cg_midtones.hue);
+            r.cg_midtones.saturation = val(j["cg_midtones"], "sat", defaults.cg_midtones.saturation);
+        }
+        if (j.contains("cg_highlights") && j["cg_highlights"].is_object()) {
+            r.cg_highlights.hue        = val(j["cg_highlights"], "hue", defaults.cg_highlights.hue);
+            r.cg_highlights.saturation = val(j["cg_highlights"], "sat", defaults.cg_highlights.saturation);
+        }
+        r.cg_blending = val(j, "cg_blending", defaults.cg_blending);
+        r.cg_balance  = val(j, "cg_balance",  defaults.cg_balance);
+
         // Sharpening
         r.sharpen_amount  = val(j, "sharpen_amount",  defaults.sharpen_amount);
         r.sharpen_radius  = val(j, "sharpen_radius",  defaults.sharpen_radius);
@@ -193,12 +238,26 @@ EditRecipe EditRecipe::fromJson(const nlohmann::json& j)
         r.denoise_color     = val(j, "denoise_color",     defaults.denoise_color);
         r.denoise_detail    = val(j, "denoise_detail",    defaults.denoise_detail);
 
+        // Presence
+        r.clarity = val(j, "clarity", defaults.clarity);
+        r.texture = val(j, "texture", defaults.texture);
+        r.dehaze  = val(j, "dehaze",  defaults.dehaze);
+
         // Crop & Rotation
         r.crop_left   = val(j, "crop_left",   defaults.crop_left);
         r.crop_top    = val(j, "crop_top",     defaults.crop_top);
         r.crop_right  = val(j, "crop_right",   defaults.crop_right);
         r.crop_bottom = val(j, "crop_bottom",  defaults.crop_bottom);
         r.rotation    = val(j, "rotation",     defaults.rotation);
+
+        // Effects
+        r.vignette_amount    = val(j, "vignette_amount",    defaults.vignette_amount);
+        r.vignette_midpoint  = val(j, "vignette_midpoint",  defaults.vignette_midpoint);
+        r.vignette_roundness = val(j, "vignette_roundness", defaults.vignette_roundness);
+        r.vignette_feather   = val(j, "vignette_feather",   defaults.vignette_feather);
+        r.grain_amount       = val(j, "grain_amount",       defaults.grain_amount);
+        r.grain_size         = val(j, "grain_size",         defaults.grain_size);
+        r.grain_roughness    = val(j, "grain_roughness",    defaults.grain_roughness);
 
         // Output color space
         r.output_colorspace = stringToColorSpace(

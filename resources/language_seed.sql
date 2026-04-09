@@ -68,6 +68,18 @@ INSERT INTO translations VALUES ('en', 'tone.highlights',   'Highlights');
 INSERT INTO translations VALUES ('en', 'tone.shadows',      'Shadows');
 INSERT INTO translations VALUES ('en', 'tone.whites',       'Whites');
 INSERT INTO translations VALUES ('en', 'tone.blacks',       'Blacks');
+INSERT INTO translations VALUES ('en', 'tone.auto',         'Auto');
+
+-- Crop & Straighten
+INSERT INTO translations VALUES ('en', 'crop.header',   'Crop & Straighten');
+INSERT INTO translations VALUES ('en', 'crop.free',     'Free');
+INSERT INTO translations VALUES ('en', 'crop.reset',    'Reset Crop');
+
+-- Presence
+INSERT INTO translations VALUES ('en', 'presence.header',  'Presence');
+INSERT INTO translations VALUES ('en', 'presence.clarity', 'Clarity');
+INSERT INTO translations VALUES ('en', 'presence.texture', 'Texture');
+INSERT INTO translations VALUES ('en', 'presence.dehaze',  'Dehaze');
 
 -- Tone Curve
 INSERT INTO translations VALUES ('en', 'curve.header',      'Tone Curve');
@@ -85,6 +97,8 @@ INSERT INTO translations VALUES ('en', 'hsl.aqua',          'Aqua');
 INSERT INTO translations VALUES ('en', 'hsl.blue',          'Blue');
 INSERT INTO translations VALUES ('en', 'hsl.purple',        'Purple');
 INSERT INTO translations VALUES ('en', 'hsl.magenta',       'Magenta');
+INSERT INTO translations VALUES ('en', 'hsl.color_mode',    'Color');
+INSERT INTO translations VALUES ('en', 'hsl.bw_mode',       'B&&W');
 
 -- Detail
 INSERT INTO translations VALUES ('en', 'detail.header',     'Detail');
@@ -98,10 +112,37 @@ INSERT INTO translations VALUES ('en', 'detail.nr_luma',    'Luminance');
 INSERT INTO translations VALUES ('en', 'detail.nr_color',   'Color');
 INSERT INTO translations VALUES ('en', 'detail.nr_detail',  'Detail');
 
+-- Color Grading
+INSERT INTO translations VALUES ('en', 'cg.header',      'Color Grading');
+INSERT INTO translations VALUES ('en', 'cg.shadows',     'Shadows');
+INSERT INTO translations VALUES ('en', 'cg.midtones',    'Midtones');
+INSERT INTO translations VALUES ('en', 'cg.highlights',  'Highlights');
+INSERT INTO translations VALUES ('en', 'cg.shadow_hue',  'Hue##cg_s');
+INSERT INTO translations VALUES ('en', 'cg.shadow_sat',  'Saturation##cg_s');
+INSERT INTO translations VALUES ('en', 'cg.mid_hue',     'Hue##cg_m');
+INSERT INTO translations VALUES ('en', 'cg.mid_sat',     'Saturation##cg_m');
+INSERT INTO translations VALUES ('en', 'cg.high_hue',    'Hue##cg_h');
+INSERT INTO translations VALUES ('en', 'cg.high_sat',    'Saturation##cg_h');
+INSERT INTO translations VALUES ('en', 'cg.blending',    'Blending');
+INSERT INTO translations VALUES ('en', 'cg.balance',     'Balance');
+
 -- Effects
 INSERT INTO translations VALUES ('en', 'fx.header',         'Effects');
 INSERT INTO translations VALUES ('en', 'fx.vibrance',       'Vibrance');
 INSERT INTO translations VALUES ('en', 'fx.saturation',     'Saturation');
+
+-- Effects: Vignette
+INSERT INTO translations VALUES ('en', 'fx.vignette_header', 'Vignette');
+INSERT INTO translations VALUES ('en', 'fx.vig_amount',      'Amount##vig');
+INSERT INTO translations VALUES ('en', 'fx.vig_midpoint',    'Midpoint##vig');
+INSERT INTO translations VALUES ('en', 'fx.vig_roundness',   'Roundness##vig');
+INSERT INTO translations VALUES ('en', 'fx.vig_feather',     'Feather##vig');
+
+-- Effects: Grain
+INSERT INTO translations VALUES ('en', 'fx.grain_header',    'Grain');
+INSERT INTO translations VALUES ('en', 'fx.grain_amount',    'Amount##grain');
+INSERT INTO translations VALUES ('en', 'fx.grain_size',      'Size##grain');
+INSERT INTO translations VALUES ('en', 'fx.grain_roughness', 'Roughness##grain');
 
 -- Status
 INSERT INTO translations VALUES ('en', 'status.ready',      'Ready');
@@ -133,6 +174,15 @@ INSERT INTO translations VALUES ('en', 'tb.develop',         'Dev');
 INSERT INTO translations VALUES ('en', 'tb.develop.tip',     'Develop mode');
 INSERT INTO translations VALUES ('en', 'tb.grid',            'Grid');
 INSERT INTO translations VALUES ('en', 'tb.grid.tip',        'Grid / Library mode');
+
+-- WB Presets
+INSERT INTO translations VALUES ('en', 'wb.preset.as_shot',    'As Shot');
+INSERT INTO translations VALUES ('en', 'wb.preset.daylight',   'Daylight');
+INSERT INTO translations VALUES ('en', 'wb.preset.cloudy',     'Cloudy');
+INSERT INTO translations VALUES ('en', 'wb.preset.shade',      'Shade');
+INSERT INTO translations VALUES ('en', 'wb.preset.tungsten',   'Tungsten');
+INSERT INTO translations VALUES ('en', 'wb.preset.fluorescent','Fluorescent');
+INSERT INTO translations VALUES ('en', 'wb.preset.flash',      'Flash');
 
 -- Slider labels (used by vegaSlider with ImGui ## IDs)
 INSERT INTO translations VALUES ('en', 'Temperature',       'Temperature');
@@ -166,6 +216,11 @@ INSERT INTO translations VALUES ('en', 'Luminance',         'Luminance');
 INSERT INTO translations VALUES ('en', 'Metadata',          'Metadata');
 INSERT INTO translations VALUES ('en', 'Sharpening',        'Sharpening');
 INSERT INTO translations VALUES ('en', 'Noise Reduction',   'Noise Reduction');
+INSERT INTO translations VALUES ('en', 'Rotation##crop',    'Rotation');
+INSERT INTO translations VALUES ('en', 'Left##crop',        'Left');
+INSERT INTO translations VALUES ('en', 'Top##crop',         'Top');
+INSERT INTO translations VALUES ('en', 'Right##crop',       'Right');
+INSERT INTO translations VALUES ('en', 'Bottom##crop',      'Bottom');
 
 -- ============================================================================
 -- Traditional Chinese (zh_tw)
@@ -214,6 +269,13 @@ INSERT INTO translations VALUES ('zh_tw', 'tone.highlights',   '亮部');
 INSERT INTO translations VALUES ('zh_tw', 'tone.shadows',      '暗部');
 INSERT INTO translations VALUES ('zh_tw', 'tone.whites',       '白色');
 INSERT INTO translations VALUES ('zh_tw', 'tone.blacks',       '黑色');
+INSERT INTO translations VALUES ('zh_tw', 'tone.auto',         '自動');
+
+-- Presence
+INSERT INTO translations VALUES ('zh_tw', 'presence.header',  '存在感');
+INSERT INTO translations VALUES ('zh_tw', 'presence.clarity', '清晰度');
+INSERT INTO translations VALUES ('zh_tw', 'presence.texture', '紋理');
+INSERT INTO translations VALUES ('zh_tw', 'presence.dehaze',  '去霧');
 
 -- Tone Curve
 INSERT INTO translations VALUES ('zh_tw', 'curve.header',      '色調曲線');
@@ -231,6 +293,8 @@ INSERT INTO translations VALUES ('zh_tw', 'hsl.aqua',          '水色');
 INSERT INTO translations VALUES ('zh_tw', 'hsl.blue',          '藍色');
 INSERT INTO translations VALUES ('zh_tw', 'hsl.purple',        '紫色');
 INSERT INTO translations VALUES ('zh_tw', 'hsl.magenta',       '洋紅');
+INSERT INTO translations VALUES ('zh_tw', 'hsl.color_mode',    '彩色');
+INSERT INTO translations VALUES ('zh_tw', 'hsl.bw_mode',       '黑白');
 
 -- Detail
 INSERT INTO translations VALUES ('zh_tw', 'detail.header',     '細節');
@@ -244,10 +308,37 @@ INSERT INTO translations VALUES ('zh_tw', 'detail.nr_luma',    '亮度');
 INSERT INTO translations VALUES ('zh_tw', 'detail.nr_color',   '色彩');
 INSERT INTO translations VALUES ('zh_tw', 'detail.nr_detail',  '細節');
 
+-- Color Grading
+INSERT INTO translations VALUES ('zh_tw', 'cg.header',      '色彩分級');
+INSERT INTO translations VALUES ('zh_tw', 'cg.shadows',     '陰影');
+INSERT INTO translations VALUES ('zh_tw', 'cg.midtones',    '中間調');
+INSERT INTO translations VALUES ('zh_tw', 'cg.highlights',  '亮部');
+INSERT INTO translations VALUES ('zh_tw', 'cg.shadow_hue',  '色相##cg_s');
+INSERT INTO translations VALUES ('zh_tw', 'cg.shadow_sat',  '飽和度##cg_s');
+INSERT INTO translations VALUES ('zh_tw', 'cg.mid_hue',     '色相##cg_m');
+INSERT INTO translations VALUES ('zh_tw', 'cg.mid_sat',     '飽和度##cg_m');
+INSERT INTO translations VALUES ('zh_tw', 'cg.high_hue',    '色相##cg_h');
+INSERT INTO translations VALUES ('zh_tw', 'cg.high_sat',    '飽和度##cg_h');
+INSERT INTO translations VALUES ('zh_tw', 'cg.blending',    '混合');
+INSERT INTO translations VALUES ('zh_tw', 'cg.balance',     '平衡');
+
 -- Effects
 INSERT INTO translations VALUES ('zh_tw', 'fx.header',         '效果');
 INSERT INTO translations VALUES ('zh_tw', 'fx.vibrance',       '自然飽和度');
 INSERT INTO translations VALUES ('zh_tw', 'fx.saturation',     '飽和度');
+
+-- Effects: Vignette
+INSERT INTO translations VALUES ('zh_tw', 'fx.vignette_header', '暗角');
+INSERT INTO translations VALUES ('zh_tw', 'fx.vig_amount',      '強度##vig');
+INSERT INTO translations VALUES ('zh_tw', 'fx.vig_midpoint',    '中心點##vig');
+INSERT INTO translations VALUES ('zh_tw', 'fx.vig_roundness',   '圓度##vig');
+INSERT INTO translations VALUES ('zh_tw', 'fx.vig_feather',     '羽化##vig');
+
+-- Effects: Grain
+INSERT INTO translations VALUES ('zh_tw', 'fx.grain_header',    '顆粒');
+INSERT INTO translations VALUES ('zh_tw', 'fx.grain_amount',    '強度##grain');
+INSERT INTO translations VALUES ('zh_tw', 'fx.grain_size',      '大小##grain');
+INSERT INTO translations VALUES ('zh_tw', 'fx.grain_roughness', '粗糙度##grain');
 
 -- Status
 INSERT INTO translations VALUES ('zh_tw', 'status.ready',      '就緒');
@@ -312,3 +403,22 @@ INSERT INTO translations VALUES ('zh_tw', 'tb.develop',         '編輯');
 INSERT INTO translations VALUES ('zh_tw', 'tb.develop.tip',     '編輯模式');
 INSERT INTO translations VALUES ('zh_tw', 'tb.grid',            '圖庫');
 INSERT INTO translations VALUES ('zh_tw', 'tb.grid.tip',        '圖庫 / Library 模式');
+
+-- WB Presets
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.as_shot',    '拍攝設定');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.daylight',   '日光');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.cloudy',     '多雲');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.shade',      '陰影');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.tungsten',   '鎢絲燈');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.fluorescent','螢光燈');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.flash',      '閃光燈');
+
+-- Crop & Straighten
+INSERT INTO translations VALUES ('zh_tw', 'crop.header',   '裁切與拉直');
+INSERT INTO translations VALUES ('zh_tw', 'crop.free',     '自由');
+INSERT INTO translations VALUES ('zh_tw', 'crop.reset',    '重設裁切');
+INSERT INTO translations VALUES ('zh_tw', 'Rotation##crop','旋轉');
+INSERT INTO translations VALUES ('zh_tw', 'Left##crop',    '左');
+INSERT INTO translations VALUES ('zh_tw', 'Top##crop',     '上');
+INSERT INTO translations VALUES ('zh_tw', 'Right##crop',   '右');
+INSERT INTO translations VALUES ('zh_tw', 'Bottom##crop',  '下');

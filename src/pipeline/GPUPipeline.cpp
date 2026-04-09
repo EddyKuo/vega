@@ -58,6 +58,22 @@ bool GPUPipeline::initialize(D3D11Context& ctx)
         VEGA_LOG_ERROR("GPUPipeline: failed to create Sharpen constant buffer");
         return false;
     }
+    if (!presence_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create Presence constant buffer");
+        return false;
+    }
+    if (!color_grading_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create ColorGrading constant buffer");
+        return false;
+    }
+    if (!crop_rotate_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create CropRotate constant buffer");
+        return false;
+    }
+    if (!effects_cb_.create(device)) {
+        VEGA_LOG_ERROR("GPUPipeline: failed to create Effects constant buffer");
+        return false;
+    }
 
     // Create linear sampler for LUT sampling
     {
@@ -330,6 +346,52 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
     }
 
     // ──────────────────────────────────────────────────────────────────────
+    // Pass 1b: Presence (Clarity, Texture, Dehaze) — linear light space
+    //   Input:  tex_a (t0)
+    //   Output: tex_b (u0)
+    //   Skip if all three parameters are negligible.
+    // ──────────────────────────────────────────────────────────────────────
+    {
+        const bool run_presence = presence_shader_.isValid() &&
+                                  (std::fabs(recipe.clarity) > 0.5f ||
+                                   std::fabs(recipe.texture) > 0.5f ||
+                                   std::fabs(recipe.dehaze)  > 0.5f);
+
+        if (run_presence) {
+            PresenceCB cb{};
+            cb.clarity = recipe.clarity;
+            cb.texture = recipe.texture;
+            cb.dehaze  = recipe.dehaze;
+            cb.pad0    = 0.0f;
+            cb.width   = dst_w;
+            cb.height  = dst_h;
+            cb.pad1    = 0;
+            cb.pad2    = 0;
+            presence_cb_.update(dc, cb);
+            presence_cb_.bindCS(dc, 0);
+
+            ID3D11ShaderResourceView* srvs[] = { tex_a.srv.Get() };
+            dc->CSSetShaderResources(0, 1, srvs);
+
+            ID3D11UnorderedAccessView* uavs[] = { tex_b.uav.Get() };
+            dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+            presence_shader_.bind(dc);
+            presence_shader_.dispatch(dc, groups_x, groups_y, 1);
+
+            // Unbind
+            ID3D11ShaderResourceView* null_srv2[] = { nullptr };
+            dc->CSSetShaderResources(0, 1, null_srv2);
+            ID3D11UnorderedAccessView* null_uav2[] = { nullptr };
+            dc->CSSetUnorderedAccessViews(0, 1, null_uav2, nullptr);
+
+            // Swap: result is now in tex_b; swap so tone curve reads from tex_a
+            std::swap(tex_a, tex_b);
+        }
+        // If skipped, tex_a still holds the WB+Exposure result — no copy needed.
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
     // Pass 2: Tone Curve (using 1D LUT textures)
     //   Input:  tex_a (t0), curve LUTs (t1-t4)
     //   Output: tex_b (u0)
@@ -380,6 +442,8 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
         }
         cb.vibrance   = recipe.vibrance;
         cb.saturation = recipe.saturation;
+        cb.bw_mode    = recipe.bw_mode ? 1u : 0u;
+        for (int i = 0; i < 8; ++i) cb.bw_mix[i] = recipe.bw_mix[i];
         hsl_cb_.update(dc, cb);
         hsl_cb_.bindCS(dc, 1);
 
@@ -405,6 +469,54 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
     // After pass 3 the latest result is in tex_a (result_in_a == true).
     // Passes 4 and 5 ping-pong without copies when skipped.
     bool result_in_a = true;
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Pass 3b: Color Grading (Shadows / Midtones / Highlights)
+    //   Input:  tex_a (t0)   Output: tex_b (u0)
+    //   Skip if all three wheels have saturation below threshold.
+    // ──────────────────────────────────────────────────────────────────────
+    {
+        const bool run_cg = color_grading_shader_.isValid() &&
+                            (recipe.cg_shadows.saturation    >= 0.1f ||
+                             recipe.cg_midtones.saturation   >= 0.1f ||
+                             recipe.cg_highlights.saturation >= 0.1f);
+
+        if (run_cg) {
+            ColorGradingCB cb{};
+            cb.shadow_hue  = recipe.cg_shadows.hue;
+            cb.shadow_sat  = recipe.cg_shadows.saturation;
+            cb.mid_hue     = recipe.cg_midtones.hue;
+            cb.mid_sat     = recipe.cg_midtones.saturation;
+            cb.high_hue    = recipe.cg_highlights.hue;
+            cb.high_sat    = recipe.cg_highlights.saturation;
+            cb.blending    = recipe.cg_blending;
+            cb.balance     = recipe.cg_balance;
+            cb.width       = dst_w;
+            cb.height      = dst_h;
+            cb.pad0 = cb.pad1 = 0.0f;
+            color_grading_cb_.update(dc, cb);
+            color_grading_cb_.bindCS(dc, 0);
+
+            // Input from tex_a (result_in_a == true at this point)
+            ID3D11ShaderResourceView* srvs[] = { tex_a.srv.Get() };
+            dc->CSSetShaderResources(0, 1, srvs);
+
+            ID3D11UnorderedAccessView* uavs[] = { tex_b.uav.Get() };
+            dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+            color_grading_shader_.bind(dc);
+            color_grading_shader_.dispatch(dc, groups_x, groups_y, 1);
+
+            // Unbind before next pass
+            ID3D11ShaderResourceView* null_srv[] = { nullptr };
+            dc->CSSetShaderResources(0, 1, null_srv);
+            ID3D11UnorderedAccessView* null_uav[] = { nullptr };
+            dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
+
+            result_in_a = false; // result now in tex_b
+        }
+        // Skip: result_in_a stays true (tex_a holds the data)
+    }
 
     // ──────────────────────────────────────────────────────────────────────
     // Pass 4: Denoise
@@ -519,6 +631,144 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
     }
     // If gamma shader is missing, the linear result is still usable for display.
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Pass 6b: Effects — Vignette + Film Grain (sRGB space, after gamma)
+    //   Input:  current result texture   Output: the other texture
+    //   Skip when all parameters are at their neutral defaults.
+    // ──────────────────────────────────────────────────────────────────────
+    {
+        const bool run_effects = effects_shader_.isValid() &&
+                                 (std::fabs(recipe.vignette_amount) > 0.5f ||
+                                  recipe.grain_amount               > 0.5f);
+
+        if (run_effects) {
+            static uint32_t frame_counter = 0;
+            ++frame_counter;
+
+            EffectsCB cb{};
+            cb.vig_amount    = recipe.vignette_amount;
+            cb.vig_midpoint  = recipe.vignette_midpoint;
+            cb.vig_roundness = recipe.vignette_roundness;
+            cb.vig_feather   = recipe.vignette_feather;
+            cb.grain_amount  = recipe.grain_amount;
+            cb.grain_size    = recipe.grain_size;
+            cb.grain_roughness = recipe.grain_roughness;
+            cb.pad0          = 0.0f;
+            cb.width         = dst_w;
+            cb.height        = dst_h;
+            cb.frame_seed    = frame_counter;
+            cb.pad1          = 0;
+            effects_cb_.update(dc, cb);
+            effects_cb_.bindCS(dc, 0);
+
+            ID3D11ShaderResourceView* in_srv  = result_in_a ? tex_a.srv.Get() : tex_b.srv.Get();
+            ID3D11UnorderedAccessView* out_uav = result_in_a ? tex_b.uav.Get() : tex_a.uav.Get();
+
+            ID3D11ShaderResourceView* srvs[] = { in_srv };
+            dc->CSSetShaderResources(0, 1, srvs);
+
+            ID3D11UnorderedAccessView* uavs[] = { out_uav };
+            dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+            effects_shader_.bind(dc);
+            effects_shader_.dispatch(dc, groups_x, groups_y, 1);
+
+            // Unbind
+            ID3D11ShaderResourceView* null_srv[] = { nullptr };
+            dc->CSSetShaderResources(0, 1, null_srv);
+            ID3D11UnorderedAccessView* null_uav[] = { nullptr };
+            dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
+
+            result_in_a = !result_in_a; // output went to the other texture
+        }
+        // Skip: result_in_a unchanged, no copy needed
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Pass 7: Crop & Rotate (optional — skipped when identity)
+    //   Input:  current result at full dst_w x dst_h (sRGB)
+    //   Output: new texture at cropped dimensions
+    // ──────────────────────────────────────────────────────────────────────
+    {
+        const bool is_identity =
+            (recipe.crop_left   < 1e-5f) &&
+            (recipe.crop_top    < 1e-5f) &&
+            (recipe.crop_right  > 1.0f - 1e-5f) &&
+            (recipe.crop_bottom > 1.0f - 1e-5f) &&
+            (std::fabs(recipe.rotation) < 0.001f);
+
+        if (!is_identity && crop_rotate_shader_.isValid()) {
+            // Clamp crop values defensively
+            float cl = std::clamp(recipe.crop_left,   0.0f, 1.0f);
+            float ct = std::clamp(recipe.crop_top,    0.0f, 1.0f);
+            float cr = std::clamp(recipe.crop_right,  0.0f, 1.0f);
+            float cb_bottom = std::clamp(recipe.crop_bottom, 0.0f, 1.0f);
+            if (cl >= cr) cr = std::min(cl + 1e-3f, 1.0f);
+            if (ct >= cb_bottom) cb_bottom = std::min(ct + 1e-3f, 1.0f);
+
+            uint32_t crop_w = std::max(1u, static_cast<uint32_t>((cr - cl) * dst_w));
+            uint32_t crop_h = std::max(1u, static_cast<uint32_t>((cb_bottom - ct) * dst_h));
+
+            auto tex_crop = pool_->acquire(crop_w, crop_h, DXGI_FORMAT_R32G32B32A32_FLOAT);
+            if (tex_crop.isValid()) {
+                // Build constant buffer
+                const float rot_rad = recipe.rotation * 3.14159265358979323846f / 180.0f;
+                CropRotateCB cr_cb{};
+                cr_cb.crop_left   = cl;
+                cr_cb.crop_top    = ct;
+                cr_cb.crop_right  = cr;
+                cr_cb.crop_bottom = cb_bottom;
+                cr_cb.rotation    = recipe.rotation;
+                cr_cb.sin_r       = std::sin(rot_rad);
+                cr_cb.cos_r       = std::cos(rot_rad);
+                cr_cb.pad0        = 0.0f;
+                cr_cb.src_width   = dst_w;
+                cr_cb.src_height  = dst_h;
+                cr_cb.dst_width   = crop_w;
+                cr_cb.dst_height  = crop_h;
+                crop_rotate_cb_.update(dc, cr_cb);
+                crop_rotate_cb_.bindCS(dc, 0);
+
+                // Input: current result
+                ID3D11ShaderResourceView* in_srv =
+                    result_in_a ? tex_a.srv.Get() : tex_b.srv.Get();
+
+                ID3D11ShaderResourceView* srvs[] = { in_srv };
+                dc->CSSetShaderResources(0, 1, srvs);
+
+                ID3D11UnorderedAccessView* uavs[] = { tex_crop.uav.Get() };
+                dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+                uint32_t gx = divRoundUp(crop_w, THREAD_GROUP_SIZE);
+                uint32_t gy = divRoundUp(crop_h, THREAD_GROUP_SIZE);
+                crop_rotate_shader_.bind(dc);
+                crop_rotate_shader_.dispatch(dc, gx, gy, 1);
+
+                // Unbind
+                ID3D11ShaderResourceView* null_srv[] = { nullptr };
+                dc->CSSetShaderResources(0, 1, null_srv);
+                ID3D11UnorderedAccessView* null_uav[] = { nullptr };
+                dc->CSSetUnorderedAccessViews(0, 1, null_uav, nullptr);
+
+                // Release the ping-pong pair and keep the cropped texture
+                pool_->release(tex_a);
+                pool_->release(tex_b);
+
+                // Release previous output if we had one
+                if (output_.isValid())
+                    pool_->release(output_);
+
+                output_ = std::move(tex_crop);
+
+                VEGA_LOG_DEBUG("GPUPipeline: process ({}x{} -> {}x{} crop, scale={:.3f}): {:.1f}ms",
+                               dst_w, dst_h, crop_w, crop_h, preview_scale, timer.elapsed_ms());
+
+                return output_.srv.Get();
+            }
+            // If texture acquisition failed, fall through to uncropped output
+        }
+    }
+
     // ── Determine which texture holds the final result ──
     // Release the unused texture back to the pool and retain the output one.
     TexturePool::TextureHandle final_tex  = result_in_a ? std::move(tex_a) : std::move(tex_b);
@@ -609,11 +859,15 @@ void GPUPipeline::loadShaders()
 
     tryLoad(demosaic_shader_,    "demosaic.hlsl");
     tryLoad(wb_exposure_shader_, "white_balance_exposure.hlsl");
+    tryLoad(presence_shader_,    "presence.hlsl");
     tryLoad(tone_curve_shader_,  "tone_curve.hlsl");
-    tryLoad(hsl_shader_,         "hsl_adjust.hlsl");
-    tryLoad(denoise_shader_,     "denoise.hlsl");
+    tryLoad(hsl_shader_,            "hsl_adjust.hlsl");
+    tryLoad(color_grading_shader_,  "color_grading.hlsl");
+    tryLoad(denoise_shader_,        "denoise.hlsl");
     tryLoad(sharpen_shader_,     "sharpen_usm.hlsl");
     tryLoad(gamma_shader_,       "gamma_output.hlsl");
+    tryLoad(effects_shader_,     "effects.hlsl");
+    tryLoad(crop_rotate_shader_, "crop_rotate.hlsl");
     tryLoad(histogram_shader_,   "histogram_compute.hlsl");
 }
 

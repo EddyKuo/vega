@@ -49,6 +49,7 @@ add_library(vega_pipeline STATIC
     pipeline/Pipeline.cpp
     pipeline/GPUPipeline.cpp
     pipeline/PreviewManager.cpp
+    pipeline/AutoTone.cpp
     pipeline/cpu/WhiteBalanceNode.cpp
     pipeline/cpu/ExposureNode.cpp
     pipeline/cpu/ToneCurveNode.cpp
@@ -132,11 +133,15 @@ if(FXC_EXECUTABLE)
     set(VEGA_HLSL_SHADERS
         demosaic.hlsl
         white_balance_exposure.hlsl
+        presence.hlsl
         tone_curve.hlsl
         hsl_adjust.hlsl
+        color_grading.hlsl
         denoise.hlsl
         sharpen_usm.hlsl
         gamma_output.hlsl
+        effects.hlsl
+        crop_rotate.hlsl
         histogram_compute.hlsl
     )
 

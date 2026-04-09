@@ -38,9 +38,13 @@ private:
     ComputeShader wb_exposure_shader_;
     ComputeShader tone_curve_shader_;
     ComputeShader hsl_shader_;
+    ComputeShader presence_shader_;
+    ComputeShader color_grading_shader_;
     ComputeShader denoise_shader_;
     ComputeShader sharpen_shader_;
     ComputeShader gamma_shader_;
+    ComputeShader effects_shader_;
+    ComputeShader crop_rotate_shader_;
     // Note: histogram_shader_ is defined but not dispatched in the display path;
     // it would be used separately for histogram computation.
     ComputeShader histogram_shader_;
@@ -86,6 +90,10 @@ private:
         float hsl_sat[8];
         float hsl_lum[8];
         float vibrance, saturation, pad1, pad2;
+        // B&W Mix (must be 16-byte aligned; total = 160 bytes)
+        uint32_t bw_mode;
+        float    bw_pad[3];
+        float    bw_mix[8];
     };
     ConstantBuffer<HSLCB> hsl_cb_;
 
@@ -95,6 +103,24 @@ private:
         uint32_t dst_width, dst_height;
     };
     ConstantBuffer<DimensionsCB> dim_cb_;
+
+    // CB slot 0 (presence pass): clarity, texture, dehaze
+    struct PresenceCB {
+        float    clarity, texture, dehaze, pad0;
+        uint32_t width, height, pad1, pad2;
+    };
+    ConstantBuffer<PresenceCB> presence_cb_;
+
+    // CB slot 0 (color grading pass): three-way tonal color grading
+    struct ColorGradingCB {
+        float    shadow_hue,  shadow_sat;   //  8 bytes
+        float    mid_hue,     mid_sat;      // 16 bytes
+        float    high_hue,    high_sat;     // 24 bytes
+        float    blending,    balance;      // 32 bytes
+        uint32_t width,       height;       // 40 bytes
+        float    pad0,        pad1;         // 48 bytes — 16-byte aligned total
+    };
+    ConstantBuffer<ColorGradingCB> color_grading_cb_;
 
     // CB slot 0 (denoise pass): luminance/chroma denoise parameters
     struct DenoiseCB {
@@ -108,6 +134,14 @@ private:
     };
     ConstantBuffer<DenoiseCB> denoise_cb_;
 
+    // CB slot 0 (crop/rotate pass): crop rectangle + rotation
+    struct CropRotateCB {
+        float crop_left, crop_top, crop_right, crop_bottom;
+        float rotation, sin_r, cos_r, pad0;
+        uint32_t src_width, src_height, dst_width, dst_height;
+    };
+    ConstantBuffer<CropRotateCB> crop_rotate_cb_;
+
     // CB slot 0 (sharpen pass): unsharp-mask sharpening parameters
     struct SharpenCB {
         float amount;    // recipe.sharpen_amount / 50
@@ -116,6 +150,14 @@ private:
         float pad0;
     };
     ConstantBuffer<SharpenCB> sharpen_cb_;
+
+    // CB slot 0 (effects pass): vignette + grain, applied in sRGB space
+    struct EffectsCB {
+        float    vig_amount, vig_midpoint, vig_roundness, vig_feather;
+        float    grain_amount, grain_size, grain_roughness, pad0;
+        uint32_t width, height, frame_seed, pad1;
+    };
+    ConstantBuffer<EffectsCB> effects_cb_;
 
     // ── Curve LUT textures (1D, 4096 entries each) ──
     static constexpr uint32_t CURVE_LUT_SIZE = 4096;

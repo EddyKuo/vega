@@ -99,25 +99,31 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
     }
 
     // Section renderers
-    bool wb_changed     = renderWhiteBalance(recipe);
+    bool crop_changed     = renderCrop(recipe);
     ImGui::Separator();
-    bool tone_changed   = renderTone(recipe);
+    bool wb_changed       = renderWhiteBalance(recipe);
     ImGui::Separator();
-    bool curve_changed  = renderToneCurve(recipe);
+    bool tone_changed     = renderTone(recipe);
     ImGui::Separator();
-    bool hsl_changed    = renderHSL(recipe);
+    bool presence_changed = renderPresence(recipe);
     ImGui::Separator();
-    bool detail_changed = renderDetail(recipe);
+    bool curve_changed    = renderToneCurve(recipe);
     ImGui::Separator();
-    bool fx_changed     = renderEffects(recipe);
+    bool hsl_changed      = renderHSL(recipe);
+    ImGui::Separator();
+    bool cg_changed       = renderColorGrading(recipe);
+    ImGui::Separator();
+    bool detail_changed   = renderDetail(recipe);
+    ImGui::Separator();
+    bool fx_changed       = renderEffects(recipe);
 
-    any_changed = wb_changed || tone_changed || curve_changed ||
-                  hsl_changed || detail_changed || fx_changed;
+    any_changed = crop_changed || wb_changed || tone_changed || presence_changed ||
+                  curve_changed || hsl_changed || cg_changed || detail_changed || fx_changed;
 
     if (any_changed)
     {
-        VEGA_LOG_TRACE("DevelopPanel: changed [WB:{} Tone:{} Curve:{} HSL:{} Detail:{} FX:{}]",
-            wb_changed, tone_changed, curve_changed, hsl_changed, detail_changed, fx_changed);
+        VEGA_LOG_TRACE("DevelopPanel: changed [Crop:{} WB:{} Tone:{} Presence:{} Curve:{} HSL:{} CG:{} Detail:{} FX:{}]",
+            crop_changed, wb_changed, tone_changed, presence_changed, curve_changed, hsl_changed, cg_changed, detail_changed, fx_changed);
     }
 
     // Drag-based undo grouping
@@ -135,12 +141,15 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
         {
             // Determine a description based on what changed
             std::string desc = "Adjustment";
-            if (wb_changed)       desc = "White Balance";
-            else if (tone_changed)  desc = "Tone";
-            else if (curve_changed) desc = "Tone Curve";
-            else if (hsl_changed)   desc = "HSL";
-            else if (detail_changed) desc = "Detail";
-            else if (fx_changed)    desc = "Effects";
+            if (crop_changed)          desc = "Crop & Straighten";
+            else if (wb_changed)       desc = "White Balance";
+            else if (tone_changed)     desc = "Tone";
+            else if (presence_changed) desc = "Presence";
+            else if (curve_changed)    desc = "Tone Curve";
+            else if (hsl_changed)      desc = "HSL";
+            else if (cg_changed)       desc = "Color Grading";
+            else if (detail_changed)   desc = "Detail";
+            else if (fx_changed)       desc = "Effects";
 
             EditCommand cmd;
             cmd.description = desc;
@@ -155,6 +164,75 @@ bool DevelopPanel::render(EditRecipe& recipe, EditHistory& history)
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Crop & Straighten
+// ─────────────────────────────────────────────────────────────────────
+
+bool DevelopPanel::renderCrop(EditRecipe& recipe)
+{
+    if (!ImGui::CollapsingHeader(tr(S::CROP_HEADER)))
+        return false;
+
+    bool changed = false;
+
+    // Aspect ratio preset dropdown
+    const char* ratios[] = {
+        tr("crop.free"), "1:1", "4:3", "3:2", "16:9"
+    };
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##CropAspect", &crop_ratio_idx_, ratios, IM_ARRAYSIZE(ratios)))
+    {
+        // When a fixed ratio is chosen, adjust the right/bottom edges to match
+        // while anchoring to the current left/top and clamping to [0,1].
+        if (crop_ratio_idx_ > 0)
+        {
+            static constexpr float ratio_values[] = { 0.0f, 1.0f, 4.0f/3.0f, 3.0f/2.0f, 16.0f/9.0f };
+            float target_ratio = ratio_values[crop_ratio_idx_];
+            float w = recipe.crop_right  - recipe.crop_left;
+            float h = recipe.crop_bottom - recipe.crop_top;
+            // Current actual image aspect is 1:1 in normalised space,
+            // so we constrain width/height such that w/h == target_ratio.
+            if (h > 0.0f && w / h != target_ratio)
+            {
+                // Keep width, adjust height
+                float new_h = w / target_ratio;
+                new_h = std::clamp(new_h, 1e-3f, 1.0f - recipe.crop_top);
+                recipe.crop_bottom = recipe.crop_top + new_h;
+                changed = true;
+            }
+        }
+    }
+
+    changed |= vegaSlider("Rotation##crop", &recipe.rotation, -45.0f, 45.0f, 0.0f, "%.1f deg");
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Crop");
+
+    changed |= vegaSlider("Left##crop",   &recipe.crop_left,   0.0f, 1.0f, 0.0f, "%.2f");
+    changed |= vegaSlider("Top##crop",    &recipe.crop_top,    0.0f, 1.0f, 0.0f, "%.2f");
+    changed |= vegaSlider("Right##crop",  &recipe.crop_right,  0.0f, 1.0f, 1.0f, "%.2f");
+    changed |= vegaSlider("Bottom##crop", &recipe.crop_bottom, 0.0f, 1.0f, 1.0f, "%.2f");
+
+    // Ensure left < right and top < bottom
+    if (recipe.crop_left  >= recipe.crop_right)  { recipe.crop_right  = std::min(recipe.crop_left  + 0.01f, 1.0f); changed = true; }
+    if (recipe.crop_top   >= recipe.crop_bottom) { recipe.crop_bottom = std::min(recipe.crop_top   + 0.01f, 1.0f); changed = true; }
+
+    // Reset button
+    ImGui::Spacing();
+    if (ImGui::Button(tr("crop.reset")))
+    {
+        recipe.crop_left   = 0.0f;
+        recipe.crop_top    = 0.0f;
+        recipe.crop_right  = 1.0f;
+        recipe.crop_bottom = 1.0f;
+        recipe.rotation    = 0.0f;
+        crop_ratio_idx_    = 0;
+        changed = true;
+    }
+
+    return changed;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // White Balance
 // ─────────────────────────────────────────────────────────────────────
 
@@ -164,6 +242,28 @@ bool DevelopPanel::renderWhiteBalance(EditRecipe& recipe)
         return false;
 
     bool changed = false;
+
+    // WB Preset dropdown
+    const char* preset_labels[] = {
+        tr("wb.preset.as_shot"),
+        tr("wb.preset.daylight"),
+        tr("wb.preset.cloudy"),
+        tr("wb.preset.shade"),
+        tr("wb.preset.tungsten"),
+        tr("wb.preset.fluorescent"),
+        tr("wb.preset.flash")
+    };
+    static int wb_preset_idx = 0;
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##WBPreset", &wb_preset_idx, preset_labels, IM_ARRAYSIZE(preset_labels)))
+    {
+        const float temps[] = { as_shot_temperature_, 5500.0f, 6500.0f, 7500.0f, 2850.0f, 3800.0f, 5500.0f };
+        const float tints[] = { as_shot_tint_,        0.0f,    0.0f,    0.0f,    0.0f,    10.0f,   0.0f    };
+        recipe.wb_temperature = temps[wb_preset_idx];
+        recipe.wb_tint        = tints[wb_preset_idx];
+        changed = true;
+    }
+
     changed |= vegaSlider("Temperature", &recipe.wb_temperature, 2000.0f, 12000.0f, 5500.0f, "%.0f K");
     changed |= vegaSlider("Tint",        &recipe.wb_tint,        -150.0f, 150.0f,   0.0f,    "%.0f");
     return changed;
@@ -178,6 +278,11 @@ bool DevelopPanel::renderTone(EditRecipe& recipe)
     if (!ImGui::CollapsingHeader(tr(S::TONE_HEADER), ImGuiTreeNodeFlags_DefaultOpen))
         return false;
 
+    ImGui::SameLine();
+    if (ImGui::SmallButton(tr("tone.auto"))) {
+        auto_tone_requested = true;
+    }
+
     bool changed = false;
     changed |= vegaSlider("Exposure",   &recipe.exposure,   -5.0f,   5.0f,   0.0f, "%+.2f");
     changed |= vegaSlider("Contrast",   &recipe.contrast,   -100.0f, 100.0f, 0.0f, "%.0f");
@@ -185,6 +290,22 @@ bool DevelopPanel::renderTone(EditRecipe& recipe)
     changed |= vegaSlider("Shadows",    &recipe.shadows,     -100.0f, 100.0f, 0.0f, "%.0f");
     changed |= vegaSlider("Whites",     &recipe.whites,      -100.0f, 100.0f, 0.0f, "%.0f");
     changed |= vegaSlider("Blacks",     &recipe.blacks,      -100.0f, 100.0f, 0.0f, "%.0f");
+    return changed;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Presence (Clarity, Texture, Dehaze)
+// ─────────────────────────────────────────────────────────────────────
+
+bool DevelopPanel::renderPresence(EditRecipe& recipe)
+{
+    if (!ImGui::CollapsingHeader(tr("presence.header"), ImGuiTreeNodeFlags_DefaultOpen))
+        return false;
+
+    bool changed = false;
+    changed |= vegaSlider("presence.clarity", &recipe.clarity, -100.0f, 100.0f, 0.0f, "%.0f");
+    changed |= vegaSlider("presence.texture", &recipe.texture, -100.0f, 100.0f, 0.0f, "%.0f");
+    changed |= vegaSlider("presence.dehaze",  &recipe.dehaze,  -100.0f, 100.0f, 0.0f, "%.0f");
     return changed;
 }
 
@@ -502,54 +623,116 @@ bool DevelopPanel::renderHSL(EditRecipe& recipe)
 
     bool changed = false;
 
-    const char* tab_names[] = { tr("Hue"), tr("Saturation"), tr("Luminance") };
     static const char* color_names[] = {
         "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta"
     };
 
-    // Tab bar
-    if (ImGui::BeginTabBar("##hsl_tabs"))
+    // Color / B&W mode toggle
+    if (ImGui::RadioButton(tr("hsl.color_mode"), !recipe.bw_mode))
     {
-        for (int tab = 0; tab < 3; ++tab)
-        {
-            if (ImGui::BeginTabItem(tab_names[tab]))
-            {
-                hsl_tab_ = tab;
-
-                std::array<float, 8>* arr = nullptr;
-                float range_min = 0.0f, range_max = 0.0f;
-                const char* fmt = "%.0f";
-
-                switch (tab)
-                {
-                case 0:
-                    arr = &recipe.hsl_hue;
-                    range_min = -180.0f; range_max = 180.0f;
-                    break;
-                case 1:
-                    arr = &recipe.hsl_saturation;
-                    range_min = -100.0f; range_max = 100.0f;
-                    break;
-                case 2:
-                    arr = &recipe.hsl_luminance;
-                    range_min = -100.0f; range_max = 100.0f;
-                    break;
-                }
-
-                if (arr)
-                {
-                    for (int i = 0; i < 8; ++i)
-                    {
-                        changed |= vegaSlider(color_names[i], &(*arr)[i],
-                                              range_min, range_max, 0.0f, fmt);
-                    }
-                }
-
-                ImGui::EndTabItem();
-            }
-        }
-        ImGui::EndTabBar();
+        recipe.bw_mode = false;
+        changed = true;
     }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(tr("hsl.bw_mode"), recipe.bw_mode))
+    {
+        recipe.bw_mode = true;
+        changed = true;
+    }
+
+    ImGui::Spacing();
+
+    if (recipe.bw_mode)
+    {
+        // B&W Mix: one slider per channel adjusting the grayscale luminance
+        ImGui::TextDisabled("B&W Mix");
+        ImGui::Spacing();
+        for (int i = 0; i < 8; ++i)
+        {
+            changed |= vegaSlider(color_names[i], &recipe.bw_mix[i],
+                                  -100.0f, 100.0f, 0.0f, "%.0f");
+        }
+    }
+    else
+    {
+        // Existing HSL tab bar
+        const char* tab_names[] = { tr("Hue"), tr("Saturation"), tr("Luminance") };
+
+        if (ImGui::BeginTabBar("##hsl_tabs"))
+        {
+            for (int tab = 0; tab < 3; ++tab)
+            {
+                if (ImGui::BeginTabItem(tab_names[tab]))
+                {
+                    hsl_tab_ = tab;
+
+                    std::array<float, 8>* arr = nullptr;
+                    float range_min = 0.0f, range_max = 0.0f;
+                    const char* fmt = "%.0f";
+
+                    switch (tab)
+                    {
+                    case 0:
+                        arr = &recipe.hsl_hue;
+                        range_min = -180.0f; range_max = 180.0f;
+                        break;
+                    case 1:
+                        arr = &recipe.hsl_saturation;
+                        range_min = -100.0f; range_max = 100.0f;
+                        break;
+                    case 2:
+                        arr = &recipe.hsl_luminance;
+                        range_min = -100.0f; range_max = 100.0f;
+                        break;
+                    }
+
+                    if (arr)
+                    {
+                        for (int i = 0; i < 8; ++i)
+                        {
+                            changed |= vegaSlider(color_names[i], &(*arr)[i],
+                                                  range_min, range_max, 0.0f, fmt);
+                        }
+                    }
+
+                    ImGui::EndTabItem();
+                }
+            }
+            ImGui::EndTabBar();
+        }
+    }
+
+    return changed;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Color Grading
+// ─────────────────────────────────────────────────────────────────────
+
+bool DevelopPanel::renderColorGrading(EditRecipe& recipe)
+{
+    if (!ImGui::CollapsingHeader(tr("cg.header")))
+        return false;
+
+    bool changed = false;
+
+    ImGui::TextDisabled("%s", tr("cg.shadows"));
+    changed |= vegaSlider("cg.shadow_hue", &recipe.cg_shadows.hue,        0.0f, 360.0f, 0.0f,  "%.0f");
+    changed |= vegaSlider("cg.shadow_sat", &recipe.cg_shadows.saturation, 0.0f, 100.0f, 0.0f,  "%.0f");
+
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", tr("cg.midtones"));
+    changed |= vegaSlider("cg.mid_hue", &recipe.cg_midtones.hue,        0.0f, 360.0f, 0.0f,  "%.0f");
+    changed |= vegaSlider("cg.mid_sat", &recipe.cg_midtones.saturation, 0.0f, 100.0f, 0.0f,  "%.0f");
+
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", tr("cg.highlights"));
+    changed |= vegaSlider("cg.high_hue", &recipe.cg_highlights.hue,        0.0f, 360.0f, 0.0f,  "%.0f");
+    changed |= vegaSlider("cg.high_sat", &recipe.cg_highlights.saturation, 0.0f, 100.0f, 0.0f,  "%.0f");
+
+    ImGui::Separator();
+    changed |= vegaSlider("cg.blending", &recipe.cg_blending, 0.0f, 100.0f, 50.0f, "%.0f");
+    changed |= vegaSlider("cg.balance",  &recipe.cg_balance,  -100.0f, 100.0f, 0.0f, "%.0f");
 
     return changed;
 }
@@ -598,6 +781,24 @@ bool DevelopPanel::renderEffects(EditRecipe& recipe)
     bool changed = false;
     changed |= vegaSlider("Vibrance",           &recipe.vibrance,   -100.0f, 100.0f, 0.0f, "%.0f");
     changed |= vegaSlider("Saturation##effect", &recipe.saturation, -100.0f, 100.0f, 0.0f, "%.0f");
+
+    ImGui::Spacing();
+
+    if (ImGui::CollapsingHeader(tr("fx.vignette_header")))
+    {
+        changed |= vegaSlider("fx.vig_amount",    &recipe.vignette_amount,    -100.0f, 100.0f,  0.0f, "%.0f");
+        changed |= vegaSlider("fx.vig_midpoint",  &recipe.vignette_midpoint,    0.0f, 100.0f,  50.0f, "%.0f");
+        changed |= vegaSlider("fx.vig_roundness", &recipe.vignette_roundness, -100.0f, 100.0f,  0.0f, "%.0f");
+        changed |= vegaSlider("fx.vig_feather",   &recipe.vignette_feather,     0.0f, 100.0f,  50.0f, "%.0f");
+    }
+
+    if (ImGui::CollapsingHeader(tr("fx.grain_header")))
+    {
+        changed |= vegaSlider("fx.grain_amount",    &recipe.grain_amount,    0.0f, 100.0f,  0.0f, "%.0f");
+        changed |= vegaSlider("fx.grain_size",      &recipe.grain_size,      1.0f, 100.0f, 25.0f, "%.0f");
+        changed |= vegaSlider("fx.grain_roughness", &recipe.grain_roughness, 0.0f, 100.0f, 50.0f, "%.0f");
+    }
+
     return changed;
 }
 

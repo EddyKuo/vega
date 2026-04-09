@@ -22,6 +22,14 @@ cbuffer Params : register(b1)
     float cb_saturation;
     float _pad1;
     float _pad2;
+
+    // B&W Mix (matches C++ HSLCB: bw_mode + bw_pad[3] + bw_mix[8])
+    uint   cb_bw_mode;
+    float  cb_bw_pad1;
+    float  cb_bw_pad2;
+    float  cb_bw_pad3;
+    float4 cb_bw_mix_0123;   // R, O, Y, G
+    float4 cb_bw_mix_4567;   // Aqua, B, Purple, Magenta
 };
 
 // Dimensions from slot b2 (shared)
@@ -65,9 +73,19 @@ static const float kHalfWidths[8] = {
 };
 
 // Helper to index into packed float4 pairs
-float GetHue(int i) { return (i < 4) ? cb_hsl_hue_0123[i] : cb_hsl_hue_4567[i - 4]; }
-float GetSat(int i) { return (i < 4) ? cb_hsl_sat_0123[i] : cb_hsl_sat_4567[i - 4]; }
-float GetLum(int i) { return (i < 4) ? cb_hsl_lum_0123[i] : cb_hsl_lum_4567[i - 4]; }
+float GetHue(int i)   { return (i < 4) ? cb_hsl_hue_0123[i]   : cb_hsl_hue_4567[i - 4]; }
+float GetSat(int i)   { return (i < 4) ? cb_hsl_sat_0123[i]   : cb_hsl_sat_4567[i - 4]; }
+float GetLum(int i)   { return (i < 4) ? cb_hsl_lum_0123[i]   : cb_hsl_lum_4567[i - 4]; }
+float GetBWMix(int i)
+{
+    // Build a flat 8-element array from the two float4s to avoid FXC X3504
+    // (literal-loop out-of-bounds false positive on ternary float4 subscript).
+    float bwArr[8] = {
+        cb_bw_mix_0123.x, cb_bw_mix_0123.y, cb_bw_mix_0123.z, cb_bw_mix_0123.w,
+        cb_bw_mix_4567.x, cb_bw_mix_4567.y, cb_bw_mix_4567.z, cb_bw_mix_4567.w
+    };
+    return bwArr[i];
+}
 
 [numthreads(16, 16, 1)]
 void CSMain(uint3 dtid : SV_DispatchThreadID)
@@ -170,6 +188,50 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
 
     // Convert back to RGB
     float3 rgb = HSLToRGB(float3(h, s, l));
+
+    // --- B&W Mix ---
+    if (cb_bw_mode != 0)
+    {
+        // Re-derive hue from the (post-HSL-adjusted) rgb to drive channel weights
+        float3 bw_hsl = RGBToHSL(rgb);
+        float bw_hue = bw_hsl.x;
+
+        float bw_totalWeight = 0.0f;
+        float bw_weights[8];
+
+        [unroll]
+        for (int bw_j = 0; bw_j < 8; ++bw_j)
+        {
+            float bw_diff = bw_hue - kCenters[bw_j];
+            if (bw_diff >  180.0f) bw_diff -= 360.0f;
+            if (bw_diff < -180.0f) bw_diff += 360.0f;
+            bw_diff = abs(bw_diff);
+
+            float bw_hw = kHalfWidths[bw_j];
+            if (bw_diff >= bw_hw)
+                bw_weights[bw_j] = 0.0f;
+            else
+                bw_weights[bw_j] = 0.5f * (1.0f + cos(PI * bw_diff / bw_hw));
+            bw_totalWeight += bw_weights[bw_j];
+        }
+
+        if (bw_totalWeight > 1e-6f)
+        {
+            float bw_inv = 1.0f / bw_totalWeight;
+            [unroll]
+            for (int bw_k = 0; bw_k < 8; ++bw_k)
+                bw_weights[bw_k] *= bw_inv;
+        }
+
+        // Weighted bw_mix adjustment (slider range -100..+100 -> -0.5..+0.5 shift)
+        float bwAdj = 0.0f;
+        [unroll]
+        for (int bw_l = 0; bw_l < 8; ++bw_l)
+            bwAdj += bw_weights[bw_l] * GetBWMix(bw_l);
+
+        float gray = saturate(Luminance(rgb) + bwAdj / 200.0f);
+        rgb = float3(gray, gray, gray);
+    }
 
     Output[dtid.xy] = float4(saturate(rgb), pixel.a);
 }
