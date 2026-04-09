@@ -39,7 +39,7 @@ Vega 是一款 Windows 原生的 RAW 照片編輯器，以 C++20 和 DirectX 11 
 ### 使用介面
 - ImGui 1.92 (Docking) 建構的專業暗色介面
 - Library / Develop 雙模式切換（按 G / D 或工具列按鈕）
-- 中文 / 英文雙語即時切換
+- 多語系支援（SQLite language.db，新增語言只需編輯 SQL seed）
 - 即時直方圖（R/G/B/亮度，對數刻度，過曝/欠曝警告）
 - Pan / Zoom 影像瀏覽（滑鼠左鍵拖拉、滾輪以游標為中心縮放、F 適配、1/2 倍率，游標不在圖上時滾輪無效）
 - 前後對比（並排 / 分割 / 切換三種模式，按 B 開關，延遲背景產生不阻塞 UI）
@@ -59,6 +59,7 @@ Vega 是一款 Windows 原生的 RAW 照片編輯器，以 C++20 和 DirectX 11 
 ### 系統整合
 - SQLite UI 狀態資料庫（ui_state.db）：視窗位置、語言、資料夾清單、ImGui 佈局統一持久化
 - 多執行緒安全：FULLMUTEX SQLite、thread_local RNG、joinable 背景執行緒
+- 三個 SQLite 資料庫各司其職：language.db（翻譯）、ui_state.db（設定）、catalog.db（照片庫）
 - Windows 暗色標題列
 - 檔案拖放開啟 RAW 檔
 - 高 DPI 支援（Per-Monitor DPI Aware V2）
@@ -149,7 +150,7 @@ vega/
 │   │   ├── UIStateDB.h/.cpp        # SQLite UI 狀態持久化（取代 settings.json）
 │   │   ├── CrashHandler.h/.cpp     # MiniDump crash handler
 │   │   ├── WindowsIntegration.h/.cpp # 暗色標題列、拖放、DPI
-│   │   ├── i18n.h/.cpp             # 中英文國際化
+│   │   ├── i18n.h/.cpp             # SQLite-backed 多語系（language.db）
 │   │   ├── Result.h                # Result<T, E> 型別
 │   │   ├── Arena.h                 # Arena allocator
 │   │   └── Types.h                 # 全域型別定義
@@ -208,9 +209,14 @@ vega/
 │   └── histogram_compute.hlsl      # GPU histogram
 ├── tests/                          # Catch2 測試
 │   ├── test_pipeline.cpp           # CPU 管線測試 (16 cases)
-│   └── test_gpu_pipeline.cpp       # GPU 管線測試 (5 cases)
+│   ├── test_gpu_pipeline.cpp       # GPU 管線測試 (5 cases)
+│   └── test_i18n.cpp              # 多語系測試 (8 cases, 82 assertions)
+├── tools/
+│   └── gen_langdb.cpp             # Build-time language.db 產生工具
 ├── third_party/imgui/              # ImGui (docking branch)
-├── resources/                      # Windows 資源檔
+├── resources/
+│   ├── language_seed.sql           # 多語系翻譯 SQL seed（EN + ZH_TW）
+│   └── vega.rc                     # Windows 資源檔
 ├── CMakeLists.txt                  # 頂層 CMake
 ├── CMakePresets.json               # VS2022 preset
 ├── vcpkg.json                      # vcpkg 依賴清單
@@ -281,6 +287,7 @@ vega/
 
 | 路徑 | 用途 | 格式 |
 |------|------|------|
+| `<exe同目錄>/language.db` | 多語系翻譯（Build time 從 SQL seed 產生） | SQLite 3 |
 | `<exe同目錄>/ui_state.db` | UI 狀態（視窗位置、語言、資料夾清單、ImGui 佈局） | SQLite 3 |
 | `<exe同目錄>/catalog.db` | 照片資料庫（元資料、評分、標籤、縮圖 BLOB） | SQLite 3 |
 | `<RAW檔同目錄>/<檔名>.vgr` | 編輯參數（sidecar） | UTF-8 JSON |
