@@ -37,6 +37,7 @@
 #include "catalog/ImportManager.h"
 #include "core/i18n.h"
 #include "pipeline/GPUPipeline.h"
+#include "pipeline/AutoTone.h"
 
 #include <shlobj.h>
 
@@ -423,6 +424,7 @@ static bool setupRawImage(const std::filesystem::path& path)
     g_recipe = saved ? *saved : vega::EditRecipe{};
     g_history.clear();
     g_has_image = true;
+    g_develop_panel.setAsShotWB(5500.0f, 0.0f);
 
     if (g_use_gpu)
         g_gpu_pipeline.uploadRawData(g_raw_image);
@@ -1183,6 +1185,20 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         if (g_app_mode == AppMode::Develop) {
             if (g_develop_panel.render(g_recipe, g_history))
                 reprocessPipeline();
+
+            if (g_develop_panel.auto_tone_requested) {
+                g_develop_panel.auto_tone_requested = false;
+                if (g_rgba_ptr && !g_rgba_ptr->empty()) {
+                    auto at = vega::computeAutoTone(g_rgba_ptr->data(), g_display_w, g_display_h);
+                    g_recipe.exposure   = at.exposure;
+                    g_recipe.contrast   = at.contrast;
+                    g_recipe.highlights = at.highlights;
+                    g_recipe.shadows    = at.shadows;
+                    g_recipe.whites     = at.whites;
+                    g_recipe.blacks     = at.blacks;
+                    reprocessPipeline();
+                }
+            }
 
             if (g_has_image && ImGui::CollapsingHeader(vega::tr("Metadata")))
             {

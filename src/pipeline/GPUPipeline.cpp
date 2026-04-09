@@ -380,6 +380,8 @@ ID3D11ShaderResourceView* GPUPipeline::process(const RawImage& raw,
         }
         cb.vibrance   = recipe.vibrance;
         cb.saturation = recipe.saturation;
+        cb.bw_mode    = recipe.bw_mode ? 1u : 0u;
+        for (int i = 0; i < 8; ++i) cb.bw_mix[i] = recipe.bw_mix[i];
         hsl_cb_.update(dc, cb);
         hsl_cb_.bindCS(dc, 1);
 

@@ -164,6 +164,28 @@ bool DevelopPanel::renderWhiteBalance(EditRecipe& recipe)
         return false;
 
     bool changed = false;
+
+    // WB Preset dropdown
+    const char* preset_labels[] = {
+        tr("wb.preset.as_shot"),
+        tr("wb.preset.daylight"),
+        tr("wb.preset.cloudy"),
+        tr("wb.preset.shade"),
+        tr("wb.preset.tungsten"),
+        tr("wb.preset.fluorescent"),
+        tr("wb.preset.flash")
+    };
+    static int wb_preset_idx = 0;
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##WBPreset", &wb_preset_idx, preset_labels, IM_ARRAYSIZE(preset_labels)))
+    {
+        const float temps[] = { as_shot_temperature_, 5500.0f, 6500.0f, 7500.0f, 2850.0f, 3800.0f, 5500.0f };
+        const float tints[] = { as_shot_tint_,        0.0f,    0.0f,    0.0f,    0.0f,    10.0f,   0.0f    };
+        recipe.wb_temperature = temps[wb_preset_idx];
+        recipe.wb_tint        = tints[wb_preset_idx];
+        changed = true;
+    }
+
     changed |= vegaSlider("Temperature", &recipe.wb_temperature, 2000.0f, 12000.0f, 5500.0f, "%.0f K");
     changed |= vegaSlider("Tint",        &recipe.wb_tint,        -150.0f, 150.0f,   0.0f,    "%.0f");
     return changed;
@@ -177,6 +199,11 @@ bool DevelopPanel::renderTone(EditRecipe& recipe)
 {
     if (!ImGui::CollapsingHeader(tr(S::TONE_HEADER), ImGuiTreeNodeFlags_DefaultOpen))
         return false;
+
+    ImGui::SameLine();
+    if (ImGui::SmallButton(tr("tone.auto"))) {
+        auto_tone_requested = true;
+    }
 
     bool changed = false;
     changed |= vegaSlider("Exposure",   &recipe.exposure,   -5.0f,   5.0f,   0.0f, "%+.2f");
@@ -502,53 +529,83 @@ bool DevelopPanel::renderHSL(EditRecipe& recipe)
 
     bool changed = false;
 
-    const char* tab_names[] = { tr("Hue"), tr("Saturation"), tr("Luminance") };
     static const char* color_names[] = {
         "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta"
     };
 
-    // Tab bar
-    if (ImGui::BeginTabBar("##hsl_tabs"))
+    // Color / B&W mode toggle
+    if (ImGui::RadioButton(tr("hsl.color_mode"), !recipe.bw_mode))
     {
-        for (int tab = 0; tab < 3; ++tab)
+        recipe.bw_mode = false;
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(tr("hsl.bw_mode"), recipe.bw_mode))
+    {
+        recipe.bw_mode = true;
+        changed = true;
+    }
+
+    ImGui::Spacing();
+
+    if (recipe.bw_mode)
+    {
+        // B&W Mix: one slider per channel adjusting the grayscale luminance
+        ImGui::TextDisabled("B&W Mix");
+        ImGui::Spacing();
+        for (int i = 0; i < 8; ++i)
         {
-            if (ImGui::BeginTabItem(tab_names[tab]))
-            {
-                hsl_tab_ = tab;
-
-                std::array<float, 8>* arr = nullptr;
-                float range_min = 0.0f, range_max = 0.0f;
-                const char* fmt = "%.0f";
-
-                switch (tab)
-                {
-                case 0:
-                    arr = &recipe.hsl_hue;
-                    range_min = -180.0f; range_max = 180.0f;
-                    break;
-                case 1:
-                    arr = &recipe.hsl_saturation;
-                    range_min = -100.0f; range_max = 100.0f;
-                    break;
-                case 2:
-                    arr = &recipe.hsl_luminance;
-                    range_min = -100.0f; range_max = 100.0f;
-                    break;
-                }
-
-                if (arr)
-                {
-                    for (int i = 0; i < 8; ++i)
-                    {
-                        changed |= vegaSlider(color_names[i], &(*arr)[i],
-                                              range_min, range_max, 0.0f, fmt);
-                    }
-                }
-
-                ImGui::EndTabItem();
-            }
+            changed |= vegaSlider(color_names[i], &recipe.bw_mix[i],
+                                  -100.0f, 100.0f, 0.0f, "%.0f");
         }
-        ImGui::EndTabBar();
+    }
+    else
+    {
+        // Existing HSL tab bar
+        const char* tab_names[] = { tr("Hue"), tr("Saturation"), tr("Luminance") };
+
+        if (ImGui::BeginTabBar("##hsl_tabs"))
+        {
+            for (int tab = 0; tab < 3; ++tab)
+            {
+                if (ImGui::BeginTabItem(tab_names[tab]))
+                {
+                    hsl_tab_ = tab;
+
+                    std::array<float, 8>* arr = nullptr;
+                    float range_min = 0.0f, range_max = 0.0f;
+                    const char* fmt = "%.0f";
+
+                    switch (tab)
+                    {
+                    case 0:
+                        arr = &recipe.hsl_hue;
+                        range_min = -180.0f; range_max = 180.0f;
+                        break;
+                    case 1:
+                        arr = &recipe.hsl_saturation;
+                        range_min = -100.0f; range_max = 100.0f;
+                        break;
+                    case 2:
+                        arr = &recipe.hsl_luminance;
+                        range_min = -100.0f; range_max = 100.0f;
+                        break;
+                    }
+
+                    if (arr)
+                    {
+                        for (int i = 0; i < 8; ++i)
+                        {
+                            changed |= vegaSlider(color_names[i], &(*arr)[i],
+                                                  range_min, range_max, 0.0f, fmt);
+                        }
+                    }
+
+                    ImGui::EndTabItem();
+                }
+            }
+            ImGui::EndTabBar();
+        }
     }
 
     return changed;

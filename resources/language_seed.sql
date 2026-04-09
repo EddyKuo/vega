@@ -68,6 +68,7 @@ INSERT INTO translations VALUES ('en', 'tone.highlights',   'Highlights');
 INSERT INTO translations VALUES ('en', 'tone.shadows',      'Shadows');
 INSERT INTO translations VALUES ('en', 'tone.whites',       'Whites');
 INSERT INTO translations VALUES ('en', 'tone.blacks',       'Blacks');
+INSERT INTO translations VALUES ('en', 'tone.auto',         'Auto');
 
 -- Tone Curve
 INSERT INTO translations VALUES ('en', 'curve.header',      'Tone Curve');
@@ -85,6 +86,8 @@ INSERT INTO translations VALUES ('en', 'hsl.aqua',          'Aqua');
 INSERT INTO translations VALUES ('en', 'hsl.blue',          'Blue');
 INSERT INTO translations VALUES ('en', 'hsl.purple',        'Purple');
 INSERT INTO translations VALUES ('en', 'hsl.magenta',       'Magenta');
+INSERT INTO translations VALUES ('en', 'hsl.color_mode',    'Color');
+INSERT INTO translations VALUES ('en', 'hsl.bw_mode',       'B&&W');
 
 -- Detail
 INSERT INTO translations VALUES ('en', 'detail.header',     'Detail');
@@ -133,6 +136,15 @@ INSERT INTO translations VALUES ('en', 'tb.develop',         'Dev');
 INSERT INTO translations VALUES ('en', 'tb.develop.tip',     'Develop mode');
 INSERT INTO translations VALUES ('en', 'tb.grid',            'Grid');
 INSERT INTO translations VALUES ('en', 'tb.grid.tip',        'Grid / Library mode');
+
+-- WB Presets
+INSERT INTO translations VALUES ('en', 'wb.preset.as_shot',    'As Shot');
+INSERT INTO translations VALUES ('en', 'wb.preset.daylight',   'Daylight');
+INSERT INTO translations VALUES ('en', 'wb.preset.cloudy',     'Cloudy');
+INSERT INTO translations VALUES ('en', 'wb.preset.shade',      'Shade');
+INSERT INTO translations VALUES ('en', 'wb.preset.tungsten',   'Tungsten');
+INSERT INTO translations VALUES ('en', 'wb.preset.fluorescent','Fluorescent');
+INSERT INTO translations VALUES ('en', 'wb.preset.flash',      'Flash');
 
 -- Slider labels (used by vegaSlider with ImGui ## IDs)
 INSERT INTO translations VALUES ('en', 'Temperature',       'Temperature');
@@ -214,6 +226,7 @@ INSERT INTO translations VALUES ('zh_tw', 'tone.highlights',   '亮部');
 INSERT INTO translations VALUES ('zh_tw', 'tone.shadows',      '暗部');
 INSERT INTO translations VALUES ('zh_tw', 'tone.whites',       '白色');
 INSERT INTO translations VALUES ('zh_tw', 'tone.blacks',       '黑色');
+INSERT INTO translations VALUES ('zh_tw', 'tone.auto',         '自動');
 
 -- Tone Curve
 INSERT INTO translations VALUES ('zh_tw', 'curve.header',      '色調曲線');
@@ -231,6 +244,8 @@ INSERT INTO translations VALUES ('zh_tw', 'hsl.aqua',          '水色');
 INSERT INTO translations VALUES ('zh_tw', 'hsl.blue',          '藍色');
 INSERT INTO translations VALUES ('zh_tw', 'hsl.purple',        '紫色');
 INSERT INTO translations VALUES ('zh_tw', 'hsl.magenta',       '洋紅');
+INSERT INTO translations VALUES ('zh_tw', 'hsl.color_mode',    '彩色');
+INSERT INTO translations VALUES ('zh_tw', 'hsl.bw_mode',       '黑白');
 
 -- Detail
 INSERT INTO translations VALUES ('zh_tw', 'detail.header',     '細節');
@@ -312,3 +327,12 @@ INSERT INTO translations VALUES ('zh_tw', 'tb.develop',         '編輯');
 INSERT INTO translations VALUES ('zh_tw', 'tb.develop.tip',     '編輯模式');
 INSERT INTO translations VALUES ('zh_tw', 'tb.grid',            '圖庫');
 INSERT INTO translations VALUES ('zh_tw', 'tb.grid.tip',        '圖庫 / Library 模式');
+
+-- WB Presets
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.as_shot',    '拍攝設定');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.daylight',   '日光');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.cloudy',     '多雲');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.shade',      '陰影');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.tungsten',   '鎢絲燈');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.fluorescent','螢光燈');
+INSERT INTO translations VALUES ('zh_tw', 'wb.preset.flash',      '閃光燈');

@@ -49,6 +49,7 @@ add_library(vega_pipeline STATIC
     pipeline/Pipeline.cpp
     pipeline/GPUPipeline.cpp
     pipeline/PreviewManager.cpp
+    pipeline/AutoTone.cpp
     pipeline/cpu/WhiteBalanceNode.cpp
     pipeline/cpu/ExposureNode.cpp
     pipeline/cpu/ToneCurveNode.cpp

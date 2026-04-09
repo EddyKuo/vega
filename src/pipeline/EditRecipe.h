@@ -35,6 +35,10 @@ struct EditRecipe {
     // Vibrance & Saturation
     float vibrance = 0, saturation = 0;
 
+    // B&W Mix
+    bool bw_mode = false;
+    std::array<float, 8> bw_mix = {};
+
     // Sharpening
     float sharpen_amount = 0, sharpen_radius = 1.0f;
     float sharpen_detail = 25, sharpen_masking = 0;

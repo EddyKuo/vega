@@ -86,6 +86,10 @@ private:
         float hsl_sat[8];
         float hsl_lum[8];
         float vibrance, saturation, pad1, pad2;
+        // B&W Mix (must be 16-byte aligned; total = 160 bytes)
+        uint32_t bw_mode;
+        float    bw_pad[3];
+        float    bw_mix[8];
     };
     ConstantBuffer<HSLCB> hsl_cb_;
 

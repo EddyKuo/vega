@@ -121,6 +121,10 @@ nlohmann::json EditRecipe::toJson() const
     j["vibrance"]   = vibrance;
     j["saturation"] = saturation;
 
+    // B&W Mix
+    j["bw_mode"] = bw_mode;
+    j["bw_mix"]  = arrayToJson(bw_mix);
+
     // Sharpening
     j["sharpen_amount"]  = sharpen_amount;
     j["sharpen_radius"]  = sharpen_radius;
@@ -181,6 +185,10 @@ EditRecipe EditRecipe::fromJson(const nlohmann::json& j)
         // Vibrance & Saturation
         r.vibrance   = val(j, "vibrance",   defaults.vibrance);
         r.saturation = val(j, "saturation", defaults.saturation);
+
+        // B&W Mix
+        r.bw_mode = val(j, "bw_mode", defaults.bw_mode);
+        if (j.contains("bw_mix")) r.bw_mix = arrayFromJson(j["bw_mix"], defaults.bw_mix);
 
         // Sharpening
         r.sharpen_amount  = val(j, "sharpen_amount",  defaults.sharpen_amount);

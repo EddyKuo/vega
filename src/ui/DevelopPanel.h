@@ -10,7 +10,15 @@ public:
     // Render the develop panel. Returns true if recipe was changed.
     bool render(EditRecipe& recipe, EditHistory& history);
 
+    // Called after a RAW file is opened to store the camera's As Shot WB.
+    void setAsShotWB(float temp, float tint) { as_shot_temperature_ = temp; as_shot_tint_ = tint; }
+
+    // Set to true by the Auto button in the Tone section; consumed by main.cpp each frame.
+    bool auto_tone_requested = false;
+
 private:
+    float as_shot_temperature_ = 5500.0f;
+    float as_shot_tint_        = 0.0f;
     // Track drag state for progressive preview
     bool is_dragging_ = false;
 
