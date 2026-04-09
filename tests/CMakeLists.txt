@@ -21,7 +21,8 @@ set_target_properties(vega_tests PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
-# Copy language.db next to test exe for i18n tests
+# Ensure language.db is generated before tests build, then copy it
+add_dependencies(vega_tests generate_language_db)
 add_custom_command(TARGET vega_tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_BINARY_DIR}/src/language.db"

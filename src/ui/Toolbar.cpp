@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "ui/Toolbar.h"
+#include "core/i18n.h"
 #include <imgui.h>
 
 namespace vega {
@@ -50,21 +51,21 @@ void Toolbar::render(bool has_image, bool can_undo, bool can_redo,
     ImGui::Begin("##Toolbar", nullptr, flags);
 
     // ── File section ──
-    if (iconButton("Open", "Open RAW file (Ctrl+O)"))
+    if (iconButton(tr("tb.open"), tr("tb.open.tip")))
     {
         if (callbacks_.on_open)
             callbacks_.on_open();
     }
 
     ImGui::SameLine();
-    if (iconButton("Save", "Save recipe (Ctrl+S)", has_image))
+    if (iconButton(tr("tb.save"), tr("tb.save.tip"), has_image))
     {
         if (callbacks_.on_save_recipe)
             callbacks_.on_save_recipe();
     }
 
     ImGui::SameLine();
-    if (iconButton("Export", "Export image (Ctrl+Shift+E)", has_image))
+    if (iconButton(tr("tb.export"), tr("tb.export.tip"), has_image))
     {
         if (callbacks_.on_export)
             callbacks_.on_export();
@@ -76,14 +77,14 @@ void Toolbar::render(bool has_image, bool can_undo, bool can_redo,
     ImGui::SameLine();
 
     // ── Edit section ──
-    if (iconButton("Undo", "Undo (Ctrl+Z)", has_image && can_undo))
+    if (iconButton(tr("tb.undo"), tr("tb.undo.tip"), has_image && can_undo))
     {
         if (callbacks_.on_undo)
             callbacks_.on_undo();
     }
 
     ImGui::SameLine();
-    if (iconButton("Redo", "Redo (Ctrl+Y)", has_image && can_redo))
+    if (iconButton(tr("tb.redo"), tr("tb.redo.tip"), has_image && can_redo))
     {
         if (callbacks_.on_redo)
             callbacks_.on_redo();
@@ -95,21 +96,21 @@ void Toolbar::render(bool has_image, bool can_undo, bool can_redo,
     ImGui::SameLine();
 
     // ── Zoom section ──
-    if (iconButton("Fit", "Fit to window (F)", has_image))
+    if (iconButton(tr("tb.fit"), tr("tb.fit.tip"), has_image))
     {
         if (callbacks_.on_zoom_fit)
             callbacks_.on_zoom_fit();
     }
 
     ImGui::SameLine();
-    if (iconButton("100%", "Zoom 100% (1)", has_image))
+    if (iconButton("100%", tr("tb.zoom100.tip"), has_image))
     {
         if (callbacks_.on_zoom_100)
             callbacks_.on_zoom_100();
     }
 
     ImGui::SameLine();
-    if (iconButton("200%", "Zoom 200% (2)", has_image))
+    if (iconButton("200%", tr("tb.zoom200.tip"), has_image))
     {
         if (callbacks_.on_zoom_200)
             callbacks_.on_zoom_200();
@@ -121,7 +122,7 @@ void Toolbar::render(bool has_image, bool can_undo, bool can_redo,
     ImGui::SameLine();
 
     // ── View toggles ──
-    if (iconButton("B/A", "Before / After toggle", has_image))
+    if (iconButton(tr("tb.before_after"), tr("tb.before_after.tip"), has_image))
     {
         if (callbacks_.on_toggle_before_after)
             callbacks_.on_toggle_before_after();
@@ -134,17 +135,12 @@ void Toolbar::render(bool has_image, bool can_undo, bool can_redo,
 
     // ── Mode switch (right-aligned cluster) ──
     {
-        // Highlight the active mode
         if (is_develop_mode)
-        {
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        }
         else
-        {
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
-        }
 
-        if (iconButton("Dev", "Develop mode"))
+        if (iconButton(tr("tb.develop"), tr("tb.develop.tip")))
         {
             if (callbacks_.on_mode_develop)
                 callbacks_.on_mode_develop();
@@ -154,15 +150,11 @@ void Toolbar::render(bool has_image, bool can_undo, bool can_redo,
         ImGui::SameLine();
 
         if (!is_develop_mode)
-        {
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        }
         else
-        {
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Button));
-        }
 
-        if (iconButton("Grid", "Grid / Library mode"))
+        if (iconButton(tr("tb.grid"), tr("tb.grid.tip")))
         {
             if (callbacks_.on_mode_grid)
                 callbacks_.on_mode_grid();

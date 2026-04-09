@@ -112,6 +112,28 @@ INSERT INTO translations VALUES ('en', 'status.zoom',       'Zoom');
 INSERT INTO translations VALUES ('en', 'meta.camera',       'Camera');
 INSERT INTO translations VALUES ('en', 'meta.lens',         'Lens');
 
+-- Toolbar buttons and tooltips
+INSERT INTO translations VALUES ('en', 'tb.open',            'Open');
+INSERT INTO translations VALUES ('en', 'tb.open.tip',        'Open RAW file (Ctrl+O)');
+INSERT INTO translations VALUES ('en', 'tb.save',            'Save');
+INSERT INTO translations VALUES ('en', 'tb.save.tip',        'Save recipe (Ctrl+S)');
+INSERT INTO translations VALUES ('en', 'tb.export',          'Export');
+INSERT INTO translations VALUES ('en', 'tb.export.tip',      'Export image (Ctrl+Shift+E)');
+INSERT INTO translations VALUES ('en', 'tb.undo',            'Undo');
+INSERT INTO translations VALUES ('en', 'tb.undo.tip',        'Undo (Ctrl+Z)');
+INSERT INTO translations VALUES ('en', 'tb.redo',            'Redo');
+INSERT INTO translations VALUES ('en', 'tb.redo.tip',        'Redo (Ctrl+Y)');
+INSERT INTO translations VALUES ('en', 'tb.fit',             'Fit');
+INSERT INTO translations VALUES ('en', 'tb.fit.tip',         'Fit to window (F)');
+INSERT INTO translations VALUES ('en', 'tb.zoom100.tip',     'Zoom 100% (1)');
+INSERT INTO translations VALUES ('en', 'tb.zoom200.tip',     'Zoom 200% (2)');
+INSERT INTO translations VALUES ('en', 'tb.before_after',    'B/A');
+INSERT INTO translations VALUES ('en', 'tb.before_after.tip','Before / After toggle');
+INSERT INTO translations VALUES ('en', 'tb.develop',         'Dev');
+INSERT INTO translations VALUES ('en', 'tb.develop.tip',     'Develop mode');
+INSERT INTO translations VALUES ('en', 'tb.grid',            'Grid');
+INSERT INTO translations VALUES ('en', 'tb.grid.tip',        'Grid / Library mode');
+
 -- Slider labels (used by vegaSlider with ImGui ## IDs)
 INSERT INTO translations VALUES ('en', 'Temperature',       'Temperature');
 INSERT INTO translations VALUES ('en', 'Tint',              'Tint');
@@ -268,3 +290,25 @@ INSERT INTO translations VALUES ('zh_tw', 'Luminance',         '明度');
 INSERT INTO translations VALUES ('zh_tw', 'Metadata',          '元資料');
 INSERT INTO translations VALUES ('zh_tw', 'Sharpening',        '銳利化');
 INSERT INTO translations VALUES ('zh_tw', 'Noise Reduction',   '降噪');
+
+-- Toolbar
+INSERT INTO translations VALUES ('zh_tw', 'tb.open',            '開啟');
+INSERT INTO translations VALUES ('zh_tw', 'tb.open.tip',        '開啟 RAW 檔 (Ctrl+O)');
+INSERT INTO translations VALUES ('zh_tw', 'tb.save',            '儲存');
+INSERT INTO translations VALUES ('zh_tw', 'tb.save.tip',        '儲存設定 (Ctrl+S)');
+INSERT INTO translations VALUES ('zh_tw', 'tb.export',          '匯出');
+INSERT INTO translations VALUES ('zh_tw', 'tb.export.tip',      '匯出影像 (Ctrl+Shift+E)');
+INSERT INTO translations VALUES ('zh_tw', 'tb.undo',            '復原');
+INSERT INTO translations VALUES ('zh_tw', 'tb.undo.tip',        '復原 (Ctrl+Z)');
+INSERT INTO translations VALUES ('zh_tw', 'tb.redo',            '重做');
+INSERT INTO translations VALUES ('zh_tw', 'tb.redo.tip',        '重做 (Ctrl+Y)');
+INSERT INTO translations VALUES ('zh_tw', 'tb.fit',             '適配');
+INSERT INTO translations VALUES ('zh_tw', 'tb.fit.tip',         '適合視窗 (F)');
+INSERT INTO translations VALUES ('zh_tw', 'tb.zoom100.tip',     '縮放 100% (1)');
+INSERT INTO translations VALUES ('zh_tw', 'tb.zoom200.tip',     '縮放 200% (2)');
+INSERT INTO translations VALUES ('zh_tw', 'tb.before_after',    '前/後');
+INSERT INTO translations VALUES ('zh_tw', 'tb.before_after.tip','前後對比切換');
+INSERT INTO translations VALUES ('zh_tw', 'tb.develop',         '編輯');
+INSERT INTO translations VALUES ('zh_tw', 'tb.develop.tip',     '編輯模式');
+INSERT INTO translations VALUES ('zh_tw', 'tb.grid',            '圖庫');
+INSERT INTO translations VALUES ('zh_tw', 'tb.grid.tip',        '圖庫 / Library 模式');
