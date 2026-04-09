@@ -188,3 +188,30 @@ if(FXC_EXECUTABLE)
         )
     endif()
 endif()
+
+# ── Build language.db generator tool ──
+add_executable(gen_langdb EXCLUDE_FROM_ALL
+    "${CMAKE_SOURCE_DIR}/tools/gen_langdb.cpp"
+)
+target_link_libraries(gen_langdb PRIVATE unofficial::sqlite3::sqlite3)
+target_include_directories(gen_langdb PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+set(LANG_SEED "${CMAKE_SOURCE_DIR}/resources/language_seed.sql")
+set(LANG_DB   "${CMAKE_CURRENT_BINARY_DIR}/language.db")
+
+add_custom_command(
+    OUTPUT ${LANG_DB}
+    COMMAND $<TARGET_FILE:gen_langdb> "${LANG_SEED}" "${LANG_DB}"
+    DEPENDS gen_langdb ${LANG_SEED}
+    COMMENT "Generating language.db from SQL seed"
+    VERBATIM
+)
+add_custom_target(generate_language_db ALL DEPENDS ${LANG_DB})
+add_dependencies(vega generate_language_db)
+
+add_custom_command(TARGET vega POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${LANG_DB}"
+        "$<TARGET_FILE_DIR:vega>/language.db"
+    COMMENT "Copying language.db to output directory"
+)

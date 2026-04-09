@@ -1,12 +1,16 @@
 #pragma once
 #include <string>
+#include <vector>
 #include <unordered_map>
+#include <filesystem>
+
+struct sqlite3;
 
 namespace vega {
 
 enum class Lang { EN, ZH_TW };
 
-// All translatable string keys
+// All translatable string keys (unchanged, keeps compile-time safety)
 namespace S {
     // Menu
     inline constexpr const char* MENU_FILE          = "menu.file";
@@ -98,28 +102,47 @@ namespace S {
     inline constexpr const char* WB_EYEDROPPER      = "wb.eyedropper";
 }
 
+struct LanguageInfo {
+    std::string code;
+    std::string name;
+    std::string native;
+};
+
 class I18n {
 public:
     static I18n& instance();
 
+    // Open language database (call once at startup)
+    bool openDatabase(const std::filesystem::path& db_path);
+    void closeDatabase();
+
+    // Set current language by code (e.g. "en", "zh_tw")
+    void setLanguage(const std::string& lang_code);
+
+    // Legacy enum support
     void setLanguage(Lang lang);
-    Lang language() const { return lang_; }
+    Lang language() const { return lang_enum_; }
 
     // Get translated string. Returns key itself if not found.
     const char* get(const char* key) const;
-
-    // Shorthand
     const char* operator()(const char* key) const { return get(key); }
+
+    // Get list of available languages from DB
+    std::vector<LanguageInfo> availableLanguages() const;
+
+    // Current language code
+    const std::string& languageCode() const { return lang_code_; }
 
 private:
     I18n();
-    Lang lang_ = Lang::EN;
-    std::unordered_map<std::string, std::string> strings_en_;
-    std::unordered_map<std::string, std::string> strings_zh_;
+    ~I18n();
 
-    const std::unordered_map<std::string, std::string>& current() const;
-    void initEN();
-    void initZH();
+    sqlite3* db_ = nullptr;
+    Lang lang_enum_ = Lang::EN;
+    std::string lang_code_ = "en";
+    std::unordered_map<std::string, std::string> strings_;
+
+    void loadStrings(const std::string& lang_code);
 };
 
 // Global shorthand: tr("key")
