@@ -785,17 +785,13 @@ static void renderMenuBar()
         }
         if (ImGui::BeginMenu(tr(S::MENU_LANGUAGE)))
         {
-            bool is_en = I18n::instance().language() == Lang::EN;
-            bool is_zh = I18n::instance().language() == Lang::ZH_TW;
-            if (ImGui::MenuItem("English", nullptr, is_en))
-            {
-                I18n::instance().setLanguage(Lang::EN);
-                g_settings.language = "en";
-            }
-            if (ImGui::MenuItem("\xE7\xB9\x81\xE9\xAB\x94\xE4\xB8\xAD\xE6\x96\x87", nullptr, is_zh))
-            {
-                I18n::instance().setLanguage(Lang::ZH_TW);
-                g_settings.language = "zh_tw";
+            auto langs = I18n::instance().availableLanguages();
+            for (const auto& lang : langs) {
+                bool selected = (I18n::instance().languageCode() == lang.code);
+                if (ImGui::MenuItem(lang.native.c_str(), nullptr, selected)) {
+                    I18n::instance().setLanguage(lang.code);
+                    g_settings.language = lang.code;
+                }
             }
             ImGui::EndMenu();
         }
@@ -916,11 +912,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
         VEGA_LOG_INFO("Fonts loaded: Segoe UI + Microsoft JhengHei (CJK)");
     }
 
-    // Init i18n from settings
-    if (g_settings.language == "zh_tw")
-        vega::I18n::instance().setLanguage(vega::Lang::ZH_TW);
-    else
-        vega::I18n::instance().setLanguage(vega::Lang::EN);
+    // Init i18n from language.db
+    {
+        wchar_t exe_buf[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
+        auto exe_dir = std::filesystem::path(exe_buf).parent_path();
+        vega::I18n::instance().openDatabase(exe_dir / "language.db");
+        vega::I18n::instance().setLanguage(g_settings.language);
+    }
 
     // Toolbar callbacks
     vega::Toolbar::Callbacks tb_cb;

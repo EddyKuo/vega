@@ -30,6 +30,7 @@ void Logger::init()
 
 std::shared_ptr<spdlog::logger>& Logger::get()
 {
+    if (!s_logger) init();
     return s_logger;
 }
 
