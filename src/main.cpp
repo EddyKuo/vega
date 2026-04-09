@@ -1201,6 +1201,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
                 }
             }
 
+            // Handle crop apply
+            if (g_develop_panel.crop_apply_requested) {
+                g_develop_panel.crop_apply_requested = false;
+                reprocessPipeline();
+            }
+
             if (g_has_image && ImGui::CollapsingHeader(vega::tr("Metadata")))
             {
                 auto& m = g_raw_image.metadata;
@@ -1239,9 +1245,19 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow)
             {
                 if (g_show_before_after && g_before_srv)
                     g_before_after.render(g_before_srv.Get(), g_image_srv.Get(),
-                                          g_raw_image.width, g_raw_image.height);
-                else
-                    g_viewport.render(g_image_srv.Get(), g_raw_image.width, g_raw_image.height);
+                                          g_display_w, g_display_h);
+                else {
+                    g_viewport.render(g_image_srv.Get(), g_display_w, g_display_h);
+
+                    // Draw crop overlay when editing crop (full image shown, crop region highlighted)
+                    if (g_develop_panel.isCropEditing()) {
+                        g_viewport.drawCropOverlay(g_display_w, g_display_h,
+                            g_develop_panel.pending_crop_left,
+                            g_develop_panel.pending_crop_top,
+                            g_develop_panel.pending_crop_right,
+                            g_develop_panel.pending_crop_bottom);
+                    }
+                }
             }
             else
             {

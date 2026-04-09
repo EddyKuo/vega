@@ -29,8 +29,17 @@ private:
     // Snapshot of recipe before a drag begins, used for undo grouping
     EditRecipe drag_start_recipe_{};
 
-    // Crop aspect ratio preset index: 0=Free, 1=1:1, 2=4:3, 3=3:2, 4=16:9
+    // Crop state
     int crop_ratio_idx_ = 0;
+    bool crop_editing_ = false;  // true while user is adjusting, crop not yet applied
+public:
+    bool isCropEditing() const { return crop_editing_; }
+    // Pending crop values (shown as overlay, not applied to pipeline yet)
+    float pending_crop_left = 0, pending_crop_top = 0;
+    float pending_crop_right = 1, pending_crop_bottom = 1;
+    float pending_rotation = 0;
+    bool crop_apply_requested = false;
+private:
 
     // HSL tab selection: 0=Hue, 1=Saturation, 2=Luminance
     int hsl_tab_ = 0;

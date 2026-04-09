@@ -172,7 +172,15 @@ bool DevelopPanel::renderCrop(EditRecipe& recipe)
     if (!ImGui::CollapsingHeader(tr(S::CROP_HEADER)))
         return false;
 
-    bool changed = false;
+    // Enter edit mode when section is first opened
+    if (!crop_editing_) {
+        crop_editing_ = true;
+        pending_crop_left   = recipe.crop_left;
+        pending_crop_top    = recipe.crop_top;
+        pending_crop_right  = recipe.crop_right;
+        pending_crop_bottom = recipe.crop_bottom;
+        pending_rotation    = recipe.rotation;
+    }
 
     // Aspect ratio preset dropdown
     const char* ratios[] = {
@@ -181,67 +189,80 @@ bool DevelopPanel::renderCrop(EditRecipe& recipe)
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::Combo("##CropAspect", &crop_ratio_idx_, ratios, IM_ARRAYSIZE(ratios)))
     {
-        // Enforce pixel-correct aspect ratio, accounting for image dimensions
         if (crop_ratio_idx_ > 0)
         {
             static constexpr float ratio_values[] = { 0.0f, 1.0f, 4.0f/3.0f, 3.0f/2.0f, 16.0f/9.0f };
             float target_ratio = ratio_values[crop_ratio_idx_];
-
-            // Convert target pixel ratio to normalized-space ratio
-            // In normalized space: pixel_w = norm_w * img_width, pixel_h = norm_h * img_height
-            // target_ratio = pixel_w / pixel_h = (norm_w * img_width) / (norm_h * img_height)
-            // norm_w / norm_h = target_ratio * img_height / img_width
             float img_aspect = static_cast<float>(img_width_) / static_cast<float>(img_height_);
             float norm_ratio = target_ratio / img_aspect;
 
-            float w = recipe.crop_right - recipe.crop_left;
-            float h = recipe.crop_bottom - recipe.crop_top;
-
-            if (h > 0.0f)
-            {
-                float new_h = w / norm_ratio;
-                if (new_h > 1.0f - recipe.crop_top) {
-                    // Height doesn't fit, constrain width instead
-                    new_h = 1.0f - recipe.crop_top;
-                    float new_w = new_h * norm_ratio;
-                    new_w = std::clamp(new_w, 1e-3f, 1.0f - recipe.crop_left);
-                    recipe.crop_right = recipe.crop_left + new_w;
-                }
-                new_h = std::clamp(new_h, 1e-3f, 1.0f - recipe.crop_top);
-                recipe.crop_bottom = recipe.crop_top + new_h;
-                changed = true;
+            float w = pending_crop_right - pending_crop_left;
+            float new_h = w / norm_ratio;
+            if (new_h > 1.0f - pending_crop_top) {
+                new_h = 1.0f - pending_crop_top;
+                float new_w = new_h * norm_ratio;
+                new_w = std::clamp(new_w, 1e-3f, 1.0f - pending_crop_left);
+                pending_crop_right = pending_crop_left + new_w;
             }
+            pending_crop_bottom = pending_crop_top + std::clamp(new_h, 1e-3f, 1.0f - pending_crop_top);
         }
     }
 
-    changed |= vegaSlider("Rotation##crop", &recipe.rotation, -45.0f, 45.0f, 0.0f, "%.1f deg");
+    vegaSlider("Rotation##crop", &pending_rotation, -45.0f, 45.0f, 0.0f, "%.1f deg");
 
     ImGui::Spacing();
     ImGui::TextDisabled("Crop");
 
-    changed |= vegaSlider("Left##crop",   &recipe.crop_left,   0.0f, 1.0f, 0.0f, "%.2f");
-    changed |= vegaSlider("Top##crop",    &recipe.crop_top,    0.0f, 1.0f, 0.0f, "%.2f");
-    changed |= vegaSlider("Right##crop",  &recipe.crop_right,  0.0f, 1.0f, 1.0f, "%.2f");
-    changed |= vegaSlider("Bottom##crop", &recipe.crop_bottom, 0.0f, 1.0f, 1.0f, "%.2f");
+    vegaSlider("Left##crop",   &pending_crop_left,   0.0f, 0.99f, 0.0f, "%.2f");
+    vegaSlider("Top##crop",    &pending_crop_top,    0.0f, 0.99f, 0.0f, "%.2f");
+    vegaSlider("Right##crop",  &pending_crop_right,  0.01f, 1.0f, 1.0f, "%.2f");
+    vegaSlider("Bottom##crop", &pending_crop_bottom, 0.01f, 1.0f, 1.0f, "%.2f");
 
-    // Ensure left < right and top < bottom
-    if (recipe.crop_left  >= recipe.crop_right)  { recipe.crop_right  = std::min(recipe.crop_left  + 0.01f, 1.0f); changed = true; }
-    if (recipe.crop_top   >= recipe.crop_bottom) { recipe.crop_bottom = std::min(recipe.crop_top   + 0.01f, 1.0f); changed = true; }
+    // Clamp
+    if (pending_crop_left >= pending_crop_right)  pending_crop_right  = std::min(pending_crop_left + 0.01f, 1.0f);
+    if (pending_crop_top  >= pending_crop_bottom) pending_crop_bottom = std::min(pending_crop_top  + 0.01f, 1.0f);
 
-    // Reset button
+    // Show pending crop pixel dimensions
+    uint32_t pw = static_cast<uint32_t>((pending_crop_right - pending_crop_left) * img_width_);
+    uint32_t ph = static_cast<uint32_t>((pending_crop_bottom - pending_crop_top) * img_height_);
+    ImGui::TextDisabled("%u x %u px", pw, ph);
+
+    // Apply / Cancel / Reset buttons
     ImGui::Spacing();
+    if (ImGui::Button(tr("crop.apply")))
+    {
+        recipe.crop_left   = pending_crop_left;
+        recipe.crop_top    = pending_crop_top;
+        recipe.crop_right  = pending_crop_right;
+        recipe.crop_bottom = pending_crop_bottom;
+        recipe.rotation    = pending_rotation;
+        crop_editing_ = false;
+        crop_apply_requested = true;
+        return true;  // recipe changed
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(tr("crop.cancel")))
+    {
+        // Revert pending to current recipe values
+        pending_crop_left   = recipe.crop_left;
+        pending_crop_top    = recipe.crop_top;
+        pending_crop_right  = recipe.crop_right;
+        pending_crop_bottom = recipe.crop_bottom;
+        pending_rotation    = recipe.rotation;
+        crop_editing_ = false;
+    }
+    ImGui::SameLine();
     if (ImGui::Button(tr("crop.reset")))
     {
-        recipe.crop_left   = 0.0f;
-        recipe.crop_top    = 0.0f;
-        recipe.crop_right  = 1.0f;
-        recipe.crop_bottom = 1.0f;
-        recipe.rotation    = 0.0f;
-        crop_ratio_idx_    = 0;
-        changed = true;
+        pending_crop_left   = 0.0f;
+        pending_crop_top    = 0.0f;
+        pending_crop_right  = 1.0f;
+        pending_crop_bottom = 1.0f;
+        pending_rotation    = 0.0f;
+        crop_ratio_idx_     = 0;
     }
 
-    return changed;
+    return false;  // no pipeline change until Apply
 }
 
 // ─────────────────────────────────────────────────────────────────────

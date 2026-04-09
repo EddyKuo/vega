@@ -73,7 +73,9 @@ INSERT INTO translations VALUES ('en', 'tone.auto',         'Auto');
 -- Crop & Straighten
 INSERT INTO translations VALUES ('en', 'crop.header',   'Crop & Straighten');
 INSERT INTO translations VALUES ('en', 'crop.free',     'Free');
-INSERT INTO translations VALUES ('en', 'crop.reset',    'Reset Crop');
+INSERT INTO translations VALUES ('en', 'crop.apply',    'Apply Crop');
+INSERT INTO translations VALUES ('en', 'crop.cancel',   'Cancel');
+INSERT INTO translations VALUES ('en', 'crop.reset',    'Reset');
 
 -- Presence
 INSERT INTO translations VALUES ('en', 'presence.header',  'Presence');
@@ -416,7 +418,9 @@ INSERT INTO translations VALUES ('zh_tw', 'wb.preset.flash',      '閃光燈');
 -- Crop & Straighten
 INSERT INTO translations VALUES ('zh_tw', 'crop.header',   '裁切與拉直');
 INSERT INTO translations VALUES ('zh_tw', 'crop.free',     '自由');
-INSERT INTO translations VALUES ('zh_tw', 'crop.reset',    '重設裁切');
+INSERT INTO translations VALUES ('zh_tw', 'crop.apply',    '套用裁切');
+INSERT INTO translations VALUES ('zh_tw', 'crop.cancel',   '取消');
+INSERT INTO translations VALUES ('zh_tw', 'crop.reset',    '重設');
 INSERT INTO translations VALUES ('zh_tw', 'Rotation##crop','旋轉');
 INSERT INTO translations VALUES ('zh_tw', 'Left##crop',    '左');
 INSERT INTO translations VALUES ('zh_tw', 'Top##crop',     '上');

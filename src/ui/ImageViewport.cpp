@@ -223,4 +223,52 @@ void ImageViewport::render(ID3D11ShaderResourceView* image_srv,
     }
 }
 
+void ImageViewport::drawCropOverlay(uint32_t img_width, uint32_t img_height,
+                                     float crop_left, float crop_top,
+                                     float crop_right, float crop_bottom)
+{
+    if (img_width == 0 || img_height == 0) return;
+
+    float disp_w = img_width * zoom_;
+    float disp_h = img_height * zoom_;
+    float img_x0 = content_min_.x + (content_size_.x - disp_w) * 0.5f + pan_.x;
+    float img_y0 = content_min_.y + (content_size_.y - disp_h) * 0.5f + pan_.y;
+
+    // Crop region in screen coordinates
+    float cx0 = img_x0 + crop_left  * disp_w;
+    float cy0 = img_y0 + crop_top   * disp_h;
+    float cx1 = img_x0 + crop_right * disp_w;
+    float cy1 = img_y0 + crop_bottom * disp_h;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 clip_min = content_min_;
+    ImVec2 clip_max(content_min_.x + content_size_.x, content_min_.y + content_size_.y);
+    dl->PushClipRect(clip_min, clip_max, true);
+
+    ImU32 dim = IM_COL32(0, 0, 0, 140);
+
+    // Top strip (above crop)
+    dl->AddRectFilled(ImVec2(img_x0, img_y0), ImVec2(img_x0 + disp_w, cy0), dim);
+    // Bottom strip (below crop)
+    dl->AddRectFilled(ImVec2(img_x0, cy1), ImVec2(img_x0 + disp_w, img_y0 + disp_h), dim);
+    // Left strip (between top and bottom)
+    dl->AddRectFilled(ImVec2(img_x0, cy0), ImVec2(cx0, cy1), dim);
+    // Right strip
+    dl->AddRectFilled(ImVec2(cx1, cy0), ImVec2(img_x0 + disp_w, cy1), dim);
+
+    // Crop border
+    dl->AddRect(ImVec2(cx0, cy0), ImVec2(cx1, cy1), IM_COL32(255, 255, 255, 200), 0, 0, 1.5f);
+
+    // Rule of thirds guides
+    float third_w = (cx1 - cx0) / 3.0f;
+    float third_h = (cy1 - cy0) / 3.0f;
+    ImU32 guide = IM_COL32(255, 255, 255, 60);
+    dl->AddLine(ImVec2(cx0 + third_w, cy0), ImVec2(cx0 + third_w, cy1), guide);
+    dl->AddLine(ImVec2(cx0 + third_w * 2, cy0), ImVec2(cx0 + third_w * 2, cy1), guide);
+    dl->AddLine(ImVec2(cx0, cy0 + third_h), ImVec2(cx1, cy0 + third_h), guide);
+    dl->AddLine(ImVec2(cx0, cy0 + third_h * 2), ImVec2(cx1, cy0 + third_h * 2), guide);
+
+    dl->PopClipRect();
+}
+
 } // namespace vega

@@ -11,6 +11,11 @@ public:
     void render(ID3D11ShaderResourceView* image_srv,
                 uint32_t img_width, uint32_t img_height);
 
+    // Draw crop overlay (call after render when crop is being edited)
+    void drawCropOverlay(uint32_t img_width, uint32_t img_height,
+                         float crop_left, float crop_top,
+                         float crop_right, float crop_bottom);
+
     float zoom() const { return zoom_; }
     void fitToWindow(ImVec2 window_size, uint32_t img_w, uint32_t img_h);
 
