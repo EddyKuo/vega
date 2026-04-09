@@ -208,7 +208,9 @@ bool DevelopPanel::renderCrop(EditRecipe& recipe)
         }
     }
 
-    vegaSlider("Rotation##crop", &pending_rotation, -45.0f, 45.0f, 0.0f, "%.1f deg");
+    // Rotation applies immediately (no distortion, same output size)
+    bool rot_changed = vegaSlider("Rotation##crop", &recipe.rotation, -45.0f, 45.0f, 0.0f, "%.1f deg");
+    pending_rotation = recipe.rotation;
 
     ImGui::Spacing();
     ImGui::TextDisabled("Crop");
@@ -262,7 +264,7 @@ bool DevelopPanel::renderCrop(EditRecipe& recipe)
         crop_ratio_idx_     = 0;
     }
 
-    return false;  // no pipeline change until Apply
+    return rot_changed;  // rotation is immediate, crop waits for Apply
 }
 
 // ─────────────────────────────────────────────────────────────────────
