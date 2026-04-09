@@ -28,6 +28,10 @@ public:
     uint32_t rawWidth()  const { return raw_width_; }
     uint32_t rawHeight() const { return raw_height_; }
 
+    // Dimensions of the last rendered output (may differ from raw if cropped)
+    uint32_t outputWidth()  const { return output_.isValid() ? output_.width  : raw_width_; }
+    uint32_t outputHeight() const { return output_.isValid() ? output_.height : raw_height_; }
+
 private:
     D3D11Context* ctx_ = nullptr;
     std::unique_ptr<TexturePool> pool_;

@@ -43,15 +43,19 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     float src_u = cb_crop_left + u * (cb_crop_right  - cb_crop_left);
     float src_v = cb_crop_top  + v * (cb_crop_bottom - cb_crop_top);
 
-    // Apply rotation around the crop centre (pre-computed sin/cos in the CB)
+    // Apply rotation around the crop centre in pixel-aspect-corrected space
+    // (normalized UV space is not square, so rotate in equal-pixel-size space)
     if (abs(cb_rotation) > 0.001f)
     {
         float cx = (cb_crop_left + cb_crop_right)  * 0.5f;
         float cy = (cb_crop_top  + cb_crop_bottom) * 0.5f;
-        float dx = src_u - cx;
+        float aspect = float(cb_src_width) / float(cb_src_height);
+        float dx = (src_u - cx) * aspect;  // scale to square pixel space
         float dy = src_v - cy;
-        src_u = cx + dx * cb_cos_r - dy * cb_sin_r;
-        src_v = cy + dx * cb_sin_r + dy * cb_cos_r;
+        float rot_x = dx * cb_cos_r - dy * cb_sin_r;
+        float rot_y = dx * cb_sin_r + dy * cb_cos_r;
+        src_u = cx + rot_x / aspect;       // scale back to normalized
+        src_v = cy + rot_y;
     }
 
     // Black-fill pixels that rotate outside the source image boundary

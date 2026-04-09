@@ -325,8 +325,8 @@ static void reprocessPipeline()
             g_image_tex.Reset();
             srv->AddRef();
             g_image_srv.Attach(srv);
-            g_display_w = g_raw_image.width;
-            g_display_h = g_raw_image.height;
+            g_display_w = g_gpu_pipeline.outputWidth();
+            g_display_h = g_gpu_pipeline.outputHeight();
             g_is_preview = false;
             g_last_pipeline_ms = ms;
             // Histogram from CPU preview (small, fast)
